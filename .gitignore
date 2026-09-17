@@ -6,7 +6,8 @@ server/dist/
 .env
 .env.*
 !.env.example
-data/
+# Local SQLite data dir (repo root only — must NOT match src/data/ source files).
+/data/
 *.db
 *.db-journal
 *.db-wal
