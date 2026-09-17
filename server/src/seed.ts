@@ -1,16 +1,17 @@
 /**
- * Development seed: the real Harar Open Air Cinema event (facts from the
- * official poster) + one admin user. Idempotent — safe to run repeatedly,
- * including concurrently (each INSERT is a no-op on conflict, so overlapping
- * runs can neither duplicate nor overwrite anything).
+ * Seed: the real Harar Open Air Cinema event (facts from the official
+ * poster) + one admin user. Idempotent — safe to run repeatedly, including
+ * concurrently (each INSERT is a no-op on conflict, so overlapping runs can
+ * neither duplicate nor overwrite anything).
  * Customer bookings are NEVER seeded; the box office starts at zero.
  *
- *   npm run db:seed
- *
- * Production: Render runs this automatically before every deploy
- * (render.yaml `preDeployCommand`) — no Shell access needed.
+ * Two entry points, same function:
+ * - CLI: `npm run db:seed` (manual / preDeployCommand).
+ * - App boot: `index.ts` calls `seedDatabase()` after migrations and before
+ *   listening, so a fresh database always has its event without Shell access.
  */
 import { config } from './config';
+import type { RootDb } from './db/connection';
 import { openDatabase } from './db/connection';
 import { runMigrations } from './db/migrate';
 import type { EventRow } from './db/types';
@@ -19,11 +20,11 @@ import { newId } from './lib/ids';
 
 const EVENT_ID = 'harar-open-air-cinema-001';
 
-async function main() {
-  const db = await openDatabase(config.databaseUrl);
-  const applied = await runMigrations(db);
-  if (applied.length > 0) console.log(`[seed] Applied migrations: ${applied.join(', ')}`);
-
+/**
+ * Insert the premiere event + admin user if missing; never touches existing
+ * rows, bookings, payments, or tickets. Safe on every boot.
+ */
+export async function seedDatabase(db: RootDb): Promise<void> {
   const existing = await db.get<{ id: string }>('SELECT id FROM events WHERE id = $1', [
     EVENT_ID,
   ]);
@@ -113,12 +114,24 @@ async function main() {
   } else {
     console.log(`[seed] Admin ${email} already exists — leaving it untouched.`);
   }
+}
 
+async function main() {
+  const db = await openDatabase(config.databaseUrl);
+  const applied = await runMigrations(db);
+  if (applied.length > 0) console.log(`[seed] Applied migrations: ${applied.join(', ')}`);
+  await seedDatabase(db);
   await db.close();
   console.log('[seed] Done.');
 }
 
-main().catch((err) => {
-  console.error('[seed] Failed:', err);
-  process.exit(1);
-});
+// Only auto-run when executed directly (`npm run db:seed`). Importing this
+// module (e.g. from index.ts) must NOT seed as a side effect — the importer
+// calls seedDatabase() explicitly at the right moment.
+const invokedDirectly = (process.argv[1] ?? '').endsWith('/seed.ts') || (process.argv[1] ?? '').endsWith('\\seed.ts');
+if (invokedDirectly) {
+  main().catch((err) => {
+    console.error('[seed] Failed:', err);
+    process.exit(1);
+  });
+}

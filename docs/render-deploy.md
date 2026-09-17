@@ -27,11 +27,18 @@ When prompted for `sync: false` values:
 
 ## 2. Seed (automatic — no Shell needed)
 
-`render.yaml` sets `preDeployCommand: npm run db:seed`, so every deploy seeds
-the database before going live: it creates the admin user + premiere event
-only if missing. It never touches payments (verified: no payment code in
-`server/src/seed.ts`), never overwrites existing rows, and never touches
-customer bookings. Locally, the same command seeds a dev database:
+Seeding happens at **app boot**: after migrations and before the server
+listens, `index.ts` runs the idempotent `seedDatabase()` (`server/src/seed.ts`),
+so a fresh database always has its premiere event + admin user from the very
+first deploy — no Shell access, no dashboard setting, and no dependence on
+Blueprint sync. `render.yaml` additionally sets
+`preDeployCommand: npm run db:seed` as redundant safety for Blueprint-managed
+services; running both is harmless (the second is a no-op).
+
+The seed creates the admin user + premiere event only if missing. It never
+touches payments (verified: no payment code in `server/src/seed.ts`), never
+overwrites existing rows, and never touches customer bookings. Locally, the
+same seed runs on `npm run dev:server` / `npm start`, or standalone via:
 
 ```sh
 npm run db:seed
