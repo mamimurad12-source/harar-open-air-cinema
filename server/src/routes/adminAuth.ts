@@ -1,6 +1,6 @@
 /** Admin session endpoints (JWT in an httpOnly cookie). */
 import { Router } from 'express';
-import type { Db } from '../db/connection';
+import type { RootDb } from '../db/connection';
 import { config } from '../config';
 import { clearCookieOptions, sessionCookieOptions, signSession } from '../lib/auth';
 import { ApiError, asyncHandler } from '../lib/errors';
@@ -16,7 +16,7 @@ adminAuth.post(
   '/login',
   loginLimiter,
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const email = typeof req.body?.email === 'string' ? req.body.email : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     const user = await verifyAdminCredentials(db, email, password);
@@ -41,10 +41,11 @@ adminAuth.get(
   '/me',
   requireAdmin,
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
-    const row = db
-      .prepare('SELECT id, name, email, role FROM admin_users WHERE id = ?')
-      .get(req.admin?.sub) as { id: string; name: string; email: string; role: string } | undefined;
+    const db = req.app.locals.db as RootDb;
+    const row = await db.get<{ id: string; name: string; email: string; role: string }>(
+      'SELECT id, name, email, role FROM admin_users WHERE id = $1',
+      [req.admin?.sub],
+    );
     if (!row) throw new ApiError(401, 'UNAUTHORIZED', 'Session expired. Please log in again.');
     res.json({ user: row });
   }),

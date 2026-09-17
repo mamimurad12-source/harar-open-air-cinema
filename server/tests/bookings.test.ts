@@ -1,7 +1,9 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-import { VALID_PHONE, createTestContext } from './helper';
+import { VALID_PHONE, closeTestDatabases, createTestContext } from './helper';
+
+afterEach(() => closeTestDatabases());
 
 interface TicketJson {
   ticketNumber: string;
@@ -92,11 +94,14 @@ describe('POST /api/bookings', () => {
     const rejected = attempts.filter((r) => r.status === 409);
     assert.equal(succeeded.length, 10);
     assert.equal(rejected.length, 10);
-    const row = db.prepare('SELECT reserved_seats FROM events WHERE id = ?').get(eventId) as {
-      reserved_seats: number;
-    };
+    const row = (await db.get<{ reserved_seats: number }>(
+      'SELECT reserved_seats FROM events WHERE id = $1',
+      [eventId],
+    )) as { reserved_seats: number };
     assert.equal(row.reserved_seats, 10);
-    const count = db.prepare('SELECT COUNT(*) AS n FROM tickets').get() as { n: number };
+    const count = (await db.get<{ n: number }>('SELECT COUNT(*)::int AS n FROM tickets')) as {
+      n: number;
+    };
     assert.equal(count.n, 10);
   });
 
@@ -140,7 +145,9 @@ describe('POST /api/bookings', () => {
     }
     assert.equal(refs.size, 30);
     const tokens = (
-      db.prepare('SELECT qr_token FROM tickets').all() as Array<{ qr_token: string }>
+      (await db.all<{ qr_token: string }>('SELECT qr_token FROM tickets')) as Array<{
+        qr_token: string;
+      }>
     ).map((r) => r.qr_token);
     assert.equal(new Set(tokens).size, tokens.length);
     assert.equal(tokens.length, 30);
@@ -158,9 +165,10 @@ describe('POST /api/bookings', () => {
       (second.body.booking as BookingJson).bookingReference,
       (first.body.booking as BookingJson).bookingReference,
     );
-    const row = db.prepare('SELECT reserved_seats FROM events WHERE id = ?').get(eventId) as {
-      reserved_seats: number;
-    };
+    const row = (await db.get<{ reserved_seats: number }>(
+      'SELECT reserved_seats FROM events WHERE id = $1',
+      [eventId],
+    )) as { reserved_seats: number };
     assert.equal(row.reserved_seats, 2);
   });
 

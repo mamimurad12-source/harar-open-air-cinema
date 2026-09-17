@@ -53,7 +53,8 @@ export const asyncHandler =
   };
 
 export function isUniqueViolation(err: unknown): boolean {
-  return (err as { code?: string } | null)?.code === 'SQLITE_CONSTRAINT_UNIQUE';
+  // PostgreSQL unique_violation (replaces the old SQLite code entirely).
+  return (err as { code?: string } | null)?.code === '23505';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars

@@ -54,7 +54,9 @@ export const config = {
   isProd,
   isTest,
   port: Number(process.env.PORT ?? 3001),
-  databasePath: process.env.DATABASE_PATH ?? './data/harar-cinema.db',
+  /** PostgreSQL connection string (local docker-compose default; Neon URL in TEST/prod). */
+  databaseUrl:
+    process.env.DATABASE_URL ?? 'postgres://harar:harar@localhost:5432/harar_cinema',
   jwtSecret: resolveJwtSecret(),
   sessionCookieName: 'hoc_admin_session',
   /** Admin session lifetime. */

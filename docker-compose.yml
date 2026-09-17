@@ -1,0 +1,29 @@
+# Local development Postgres 17. Start it, then run the app/seed/tests:
+#
+#   docker compose up -d
+#   npm run db:seed        # uses DATABASE_URL below (the app default)
+#   npm run dev:all
+#
+# Tests need TEST_DATABASE_URL (see .env.example) — each test creates and
+# drops its own database on this server.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: harar-cinema-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: harar
+      POSTGRES_PASSWORD: harar
+      POSTGRES_DB: harar_cinema
+    ports:
+      - "5432:5432"
+    volumes:
+      - harar-cinema-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harar -d harar_cinema"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  harar-cinema-pgdata:

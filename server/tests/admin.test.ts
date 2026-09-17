@@ -1,7 +1,9 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-import { VALID_PHONE, authCookie, createTestContext } from './helper';
+import { VALID_PHONE, authCookie, closeTestDatabases, createTestContext } from './helper';
+
+afterEach(() => closeTestDatabases());
 
 async function loginCookie(
   app: Parameters<typeof request>[0],

@@ -3,7 +3,7 @@
  * only — NEVER mutate state), and signed webhooks (verify + idempotent).
  */
 import { Router } from 'express';
-import type { Db } from '../db/connection';
+import type { RootDb } from '../db/connection';
 import { config } from '../config';
 import { ApiError, asyncHandler, badRequest } from '../lib/errors';
 import { param } from '../lib/http';
@@ -46,7 +46,7 @@ publicPayments.get(
 publicPayments.post(
   '/webhook/:provider',
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const provider = getProvider(param(req.params.provider));
     if (!provider) throw badRequest('VALIDATION_ERROR', 'Unknown payment provider.');
     if (!provider.isConfigured()) {

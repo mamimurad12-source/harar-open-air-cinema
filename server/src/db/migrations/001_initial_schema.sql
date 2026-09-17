@@ -1,4 +1,4 @@
--- 001_initial_schema.sql — Harar Open Air Cinema core schema.
+-- 001_initial_schema.sql — Harar Open Air Cinema core schema (PostgreSQL).
 --
 -- Money is stored as INTEGER birr (tickets are whole-birr amounts).
 -- Dates/times are display labels exactly as printed on the official poster

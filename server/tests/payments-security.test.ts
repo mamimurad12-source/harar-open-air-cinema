@@ -7,12 +7,14 @@
  * Runs over HTTP against the test-only stub provider — no real rail is
  * ever contacted and no provider response is faked.
  */
-import { after, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-import { VALID_PHONE, authCookie, createTestContext } from './helper';
+import { VALID_PHONE, authCookie, closeTestDatabases, createTestContext } from './helper';
 import { __setAllowlistForTests, __setProvidersForTests } from '../src/services/payments/registry';
 import { StubProvider } from './stubProvider';
+
+afterEach(() => closeTestDatabases());
 
 type App = Parameters<typeof request>[0];
 
@@ -81,10 +83,9 @@ describe('audit: amount security (client money input is dead on arrival)', () =>
     });
     assert.equal(payment.amount, 500);
     assert.equal(payment.currency, 'ETB');
-    const row = db.prepare('SELECT amount, currency FROM payments').get() as {
-      amount: number;
-      currency: string;
-    };
+    const row = (await db.get<{ amount: number; currency: string }>(
+      'SELECT amount, currency FROM payments',
+    )) as { amount: number; currency: string };
     assert.equal(row.amount, 500);
     assert.equal(row.currency, 'ETB');
   });
@@ -107,10 +108,9 @@ describe('audit: amount security (client money input is dead on arrival)', () =>
       .send(lyingBody);
     assert.equal(res.status, 200);
     assert.equal(res.body.outcome, 'completed');
-    const row = db.prepare('SELECT amount, currency FROM payments').get() as {
-      amount: number;
-      currency: string;
-    };
+    const row = (await db.get<{ amount: number; currency: string }>(
+      'SELECT amount, currency FROM payments',
+    )) as { amount: number; currency: string };
     assert.equal(row.amount, 500); // real total, not the body's claim
     assert.equal(row.currency, 'ETB');
   });
@@ -132,11 +132,10 @@ describe('audit: amount security (client money input is dead on arrival)', () =>
       const view = await statusOf(app, booking.bookingReference);
       assert.equal(view.payment?.status, 'FAILED');
       assert.equal(view.booking.status, 'PENDING'); // retryable, never activated
-      const active = db
-        .prepare(
-          `SELECT COUNT(*) AS n FROM tickets WHERE booking_id = (SELECT id FROM bookings WHERE booking_reference = ?) AND status = 'ACTIVE'`,
-        )
-        .get(booking.bookingReference) as { n: number };
+      const active = (await db.get<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM tickets WHERE booking_id = (SELECT id FROM bookings WHERE booking_reference = $1) AND status = 'ACTIVE'`,
+        [booking.bookingReference],
+      )) as { n: number };
       assert.equal(active.n, 0);
     }
   });
@@ -192,11 +191,13 @@ describe('audit: webhook security (zero trust at the boundary)', () => {
       outcomes.push(res.body.outcome as string);
     }
     assert.deepEqual(outcomes, ['completed', 'already-processed', 'already-processed']);
-    const events = db.prepare('SELECT COUNT(*) AS n FROM webhook_events').get() as { n: number };
+    const events = (await db.get<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM webhook_events',
+    )) as { n: number };
     assert.equal(events.n, 1);
-    const paid = db.prepare("SELECT COUNT(*) AS n FROM payments WHERE status = 'PAID'").get() as {
-      n: number;
-    };
+    const paid = (await db.get<{ n: number }>(
+      "SELECT COUNT(*)::int AS n FROM payments WHERE status = 'PAID'",
+    )) as { n: number };
     assert.equal(paid.n, 1);
   });
 
@@ -211,9 +212,13 @@ describe('audit: webhook security (zero trust at the boundary)', () => {
       .send(body);
     assert.equal(res.status, 200);
     assert.equal(res.body.outcome, 'ignored');
-    const payments = db.prepare('SELECT COUNT(*) AS n FROM payments').get() as { n: number };
+    const payments = (await db.get<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM payments',
+    )) as { n: number };
     assert.equal(payments.n, 0);
-    const events = db.prepare('SELECT COUNT(*) AS n FROM webhook_events').get() as { n: number };
+    const events = (await db.get<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM webhook_events',
+    )) as { n: number };
     assert.equal(events.n, 1); // kept for ops review
   });
 });
@@ -276,28 +281,31 @@ describe('audit: expiry releases seats but never touches paid bookings', () => {
     const { app, db, eventId } = await createTestContext({ capacity: 10 });
     const booking = await book(app, eventId, 4);
     await initiate(app, booking.bookingReference, 'CBE');
-    db.prepare('UPDATE bookings SET expires_at = ? WHERE booking_reference = ?').run(
+    await db.run('UPDATE bookings SET expires_at = $1 WHERE booking_reference = $2', [
       new Date(Date.now() - 60_000).toISOString(),
       booking.bookingReference,
-    );
+    ]);
     await request(app).get(`/api/events/${eventId}`); // read path triggers the sweep
-    const brow = db
-      .prepare('SELECT status, payment_status FROM bookings WHERE booking_reference = ?')
-      .get(booking.bookingReference) as { status: string; payment_status: string };
+    const brow = (await db.get<{ status: string; payment_status: string }>(
+      'SELECT status, payment_status FROM bookings WHERE booking_reference = $1',
+      [booking.bookingReference],
+    )) as { status: string; payment_status: string };
     assert.equal(brow.status, 'EXPIRED');
     assert.equal(brow.payment_status, 'UNPAID');
-    const tickets = db
-      .prepare(
-        `SELECT status FROM tickets WHERE booking_id = (SELECT id FROM bookings WHERE booking_reference = ?)`,
-      )
-      .all(booking.bookingReference) as Array<{ status: string }>;
+    const tickets = (await db.all<{ status: string }>(
+      `SELECT status FROM tickets WHERE booking_id = (SELECT id FROM bookings WHERE booking_reference = $1)`,
+      [booking.bookingReference],
+    )) as Array<{ status: string }>;
     assert.equal(tickets.length, 4);
     assert.ok(tickets.every((t) => t.status === 'CANCELLED'));
-    const prow = db.prepare('SELECT status FROM payments').get() as { status: string };
-    assert.equal(prow.status, 'EXPIRED');
-    const event = db.prepare('SELECT reserved_seats FROM events WHERE id = ?').get(eventId) as {
-      reserved_seats: number;
+    const prow = (await db.get<{ status: string }>('SELECT status FROM payments')) as {
+      status: string;
     };
+    assert.equal(prow.status, 'EXPIRED');
+    const event = (await db.get<{ reserved_seats: number }>(
+      'SELECT reserved_seats FROM events WHERE id = $1',
+      [eventId],
+    )) as { reserved_seats: number };
     assert.equal(event.reserved_seats, 0);
   });
 
@@ -309,22 +317,24 @@ describe('audit: expiry releases seats but never touches paid bookings', () => {
       .post(`/api/bookings/${booking.bookingReference}/payment/verify`)
       .send({ phone: VALID_PHONE });
     assert.equal(verified.body.verification, 'completed');
-    db.prepare('UPDATE bookings SET expires_at = ? WHERE booking_reference = ?').run(
+    await db.run('UPDATE bookings SET expires_at = $1 WHERE booking_reference = $2', [
       new Date(Date.now() - 60_000).toISOString(),
       booking.bookingReference,
-    );
+    ]);
     await request(app).get('/api/events');
     await request(app).get(`/api/bookings/${booking.bookingReference}/payment`).query({
       phone: VALID_PHONE,
     });
-    const brow = db
-      .prepare('SELECT status, payment_status FROM bookings WHERE booking_reference = ?')
-      .get(booking.bookingReference) as { status: string; payment_status: string };
+    const brow = (await db.get<{ status: string; payment_status: string }>(
+      'SELECT status, payment_status FROM bookings WHERE booking_reference = $1',
+      [booking.bookingReference],
+    )) as { status: string; payment_status: string };
     assert.equal(brow.status, 'CONFIRMED');
     assert.equal(brow.payment_status, 'PAID');
-    const event = db.prepare('SELECT reserved_seats FROM events WHERE id = ?').get(eventId) as {
-      reserved_seats: number;
-    };
+    const event = (await db.get<{ reserved_seats: number }>(
+      'SELECT reserved_seats FROM events WHERE id = $1',
+      [eventId],
+    )) as { reserved_seats: number };
     assert.equal(event.reserved_seats, 2);
   });
 });
@@ -348,10 +358,10 @@ describe('audit: QR gates on verified payment only', () => {
     assert.equal(failedScan.body.validation.paymentPending, true);
 
     const stale = await book(app, eventId, 1);
-    db.prepare('UPDATE bookings SET expires_at = ? WHERE booking_reference = ?').run(
+    await db.run('UPDATE bookings SET expires_at = $1 WHERE booking_reference = $2', [
       new Date(Date.now() - 60_000).toISOString(),
       stale.bookingReference,
-    );
+    ]);
     await request(app).get(`/api/events/${eventId}`); // sweep expires it
     const staleScan = await request(app)
       .post('/api/admin/tickets/validate')
@@ -368,7 +378,9 @@ describe('audit: initiation + ledger idempotency and completeness', () => {
     const first = await initiate(app, booking.bookingReference, 'TELEBIRR');
     const second = await initiate(app, booking.bookingReference, 'TELEBIRR');
     assert.notEqual(first.providerTransactionId, second.providerTransactionId);
-    const rows = db.prepare('SELECT COUNT(*) AS n FROM payments').get() as { n: number };
+    const rows = (await db.get<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM payments',
+    )) as { n: number };
     assert.equal(rows.n, 1);
   });
 

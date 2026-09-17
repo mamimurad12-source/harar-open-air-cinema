@@ -1,5 +1,5 @@
 /**
- * Express application factory. Tests call `createApp({ dbPath: ':memory:' })`
+ * Express application factory. Tests call `createApp({ databaseUrl })`
  * to get an isolated app + database; production boots via `index.ts`.
  */
 import express from 'express';
@@ -8,7 +8,7 @@ import cookieParser from 'cookie-parser';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config } from './config';
-import type { Db } from './db/connection';
+import type { RootDb } from './db/connection';
 import { openDatabase } from './db/connection';
 import { runMigrations } from './db/migrate';
 import { errorHandler } from './lib/errors';
@@ -22,14 +22,14 @@ import { adminTickets } from './routes/adminTickets';
 import { adminPayments } from './routes/adminPayments';
 
 export interface AppOptions {
-  dbPath?: string;
+  databaseUrl?: string;
   /** Serve the built Vite frontend (same-origin API + site in production). */
   serveFrontend?: string | false;
 }
 
-export function createApp(options: AppOptions = {}): { app: Express; db: Db } {
-  const db = openDatabase(options.dbPath ?? config.databasePath);
-  runMigrations(db);
+export async function createApp(options: AppOptions = {}): Promise<{ app: Express; db: RootDb }> {
+  const db = await openDatabase(options.databaseUrl ?? config.databaseUrl);
+  await runMigrations(db);
 
   const app = express();
   app.set('trust proxy', 1);

@@ -55,22 +55,21 @@ function base(outcome: ValidationOutcome, message: string): ValidationResult {
   };
 }
 
-export function validateTicket(db: Db, rawInput: string): ValidationResult {
+export async function validateTicket(db: Db, rawInput: string): Promise<ValidationResult> {
   const token = extractQrToken(rawInput ?? '');
   if (!token) throw badRequest('VALIDATION_ERROR', 'Ticket code is required.');
 
-  const row = db
-    .prepare(
-      `SELECT t.*,
-              b.booking_reference, b.customer_name, b.quantity,
-              b.status AS booking_status, b.payment_status,
-              e.title AS event_title, e.status AS event_status
-       FROM tickets t
-       JOIN bookings b ON b.id = t.booking_id
-       JOIN events e ON e.id = b.event_id
-       WHERE t.qr_token = ? OR t.ticket_number = ?`,
-    )
-    .get(token, token.toUpperCase()) as JoinedRow | undefined;
+  const row = await db.get<JoinedRow>(
+    `SELECT t.*,
+            b.booking_reference, b.customer_name, b.quantity,
+            b.status AS booking_status, b.payment_status,
+            e.title AS event_title, e.status AS event_status
+     FROM tickets t
+     JOIN bookings b ON b.id = t.booking_id
+     JOIN events e ON e.id = b.event_id
+     WHERE t.qr_token = $1 OR t.ticket_number = $2`,
+    [token, token.toUpperCase()],
+  );
 
   if (!row) {
     return base('INVALID', 'Ticket not found. Do not admit.');
@@ -120,10 +119,12 @@ export function validateTicket(db: Db, rawInput: string): ValidationResult {
   }
 
   // ACTIVE → USED, guarded so exactly one concurrent scan wins.
+  // (Single-statement conditional write: atomic in Postgres too.)
   const at = new Date().toISOString();
-  const flip = db
-    .prepare(`UPDATE tickets SET status = 'USED', validated_at = ?, updated_at = ? WHERE id = ? AND status = 'ACTIVE'`)
-    .run(at, at, row.id);
+  const flip = await db.run(
+    `UPDATE tickets SET status = 'USED', validated_at = $1, updated_at = $2 WHERE id = $3 AND status = 'ACTIVE'`,
+    [at, at, row.id],
+  );
   if (flip.changes === 0) {
     return {
       ...base('ALREADY_USED', 'This ticket was just used. Do not admit again.'),

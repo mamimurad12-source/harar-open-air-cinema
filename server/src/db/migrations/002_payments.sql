@@ -6,10 +6,9 @@ ALTER TABLE bookings ADD COLUMN payment_method TEXT NULL
   CHECK (payment_method IS NULL
          OR payment_method IN ('EBIRR', 'COOPAY', 'CBE', 'TELEBIRR', 'MOBILE_BANKING'));
 ALTER TABLE bookings ADD COLUMN expires_at TEXT NULL;
--- Existing pending bookings get a deadline relative to creation (ISO-8601).
-UPDATE bookings
-SET expires_at = replace(datetime(created_at, '+30 minutes'), ' ', 'T') || 'Z'
-WHERE status = 'PENDING' AND expires_at IS NULL;
+-- NOTE: the pre-Postgres edition backfilled expires_at on existing PENDING rows
+-- with an SQLite date function. Every Postgres database starts fresh (new TEST
+-- environment), so there is nothing to backfill; new bookings always set it.
 
 -- Authoritative payment record (bookings.payment_status mirrors status here).
 CREATE TABLE IF NOT EXISTS payments (

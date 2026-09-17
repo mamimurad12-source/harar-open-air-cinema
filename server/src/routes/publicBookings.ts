@@ -3,7 +3,7 @@
  * never trusted. Payment routes live here because payment belongs to a booking.
  */
 import { Router } from 'express';
-import type { Db } from '../db/connection';
+import type { RootDb } from '../db/connection';
 import { asyncHandler, badRequest } from '../lib/errors';
 import { param } from '../lib/http';
 import { createRateLimiter } from '../lib/rateLimit';
@@ -21,9 +21,9 @@ const paymentLimiter = createRateLimiter({ windowMs: 10 * 60 * 1000, max: 30 });
 publicBookings.post(
   '/',
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const header = req.get('Idempotency-Key');
-    const { statusCode, body } = createBooking(db, {
+    const { statusCode, body } = await createBooking(db, {
       eventId: req.body?.eventId,
       customerName: req.body?.customerName,
       phone: req.body?.phone,
@@ -37,12 +37,12 @@ publicBookings.post(
 publicBookings.get(
   '/:reference',
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const phone = req.query.phone;
     if (typeof phone !== 'string' || !phone.trim()) {
       throw badRequest('VALIDATION_ERROR', 'Phone number is required to view a booking.');
     }
-    const booking = getBookingByReference(db, param(req.params.reference), phone);
+    const booking = await getBookingByReference(db, param(req.params.reference), phone);
     res.json({ booking });
   }),
 );
@@ -52,7 +52,7 @@ publicBookings.post(
   '/:reference/payment',
   paymentLimiter,
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const result = await initiatePayment(db, {
       bookingReference: param(req.params.reference),
       paymentMethod: req.body?.paymentMethod,
@@ -65,12 +65,12 @@ publicBookings.post(
 publicBookings.get(
   '/:reference/payment',
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const phone = req.query.phone;
     if (typeof phone !== 'string' || !phone.trim()) {
       throw badRequest('VALIDATION_ERROR', 'Phone number is required to view payment status.');
     }
-    res.json(getPaymentStatus(db, param(req.params.reference), phone));
+    res.json(await getPaymentStatus(db, param(req.params.reference), phone));
   }),
 );
 
@@ -82,7 +82,7 @@ publicBookings.post(
   '/:reference/payment/verify',
   paymentLimiter,
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
+    const db = req.app.locals.db as RootDb;
     const phone =
       (typeof req.body?.phone === 'string' && req.body.phone) ||
       (typeof req.query.phone === 'string' && req.query.phone) ||

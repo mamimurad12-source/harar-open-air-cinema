@@ -3,12 +3,14 @@
  * webhook → completion) runs over HTTP against the test-only stub provider —
  * real money rails are never touched and no provider response is faked.
  */
-import { after, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-import { VALID_PHONE, authCookie, createTestContext } from './helper';
+import { VALID_PHONE, authCookie, closeTestDatabases, createTestContext } from './helper';
 import { __setAllowlistForTests, __setProvidersForTests } from '../src/services/payments/registry';
 import { StubProvider } from './stubProvider';
+
+afterEach(() => closeTestDatabases());
 
 type App = Parameters<typeof request>[0];
 
@@ -109,9 +111,10 @@ describe('POST /api/bookings/:ref/payment (initiate)', () => {
     // No secrets in the response.
     assert.equal(JSON.stringify(res.body).includes('stub-webhook-secret'), false);
 
-    const row = db
-      .prepare('SELECT status, amount FROM payments WHERE booking_id = (SELECT id FROM bookings WHERE booking_reference = ?)')
-      .get(booking.bookingReference) as { status: string; amount: number };
+    const row = (await db.get<{ status: string; amount: number }>(
+      'SELECT status, amount FROM payments WHERE booking_id = (SELECT id FROM bookings WHERE booking_reference = $1)',
+      [booking.bookingReference],
+    )) as { status: string; amount: number };
     assert.equal(row.status, 'PENDING');
     assert.equal(row.amount, 500);
   });
@@ -131,9 +134,9 @@ describe('POST /api/bookings/:ref/payment (initiate)', () => {
       .send({ paymentMethod: 'CBE' });
     assert.equal(missing.status, 404);
 
-    db.prepare("UPDATE bookings SET status = 'CANCELLED' WHERE booking_reference = ?").run(
+    await db.run("UPDATE bookings SET status = 'CANCELLED' WHERE booking_reference = $1", [
       booking.bookingReference,
-    );
+    ]);
     const cancelled = await request(app)
       .post(`/api/bookings/${booking.bookingReference}/payment`)
       .send({ paymentMethod: 'CBE' });
@@ -144,19 +147,20 @@ describe('POST /api/bookings/:ref/payment (initiate)', () => {
   it('expires stale bookings (410) and releases their seats', async () => {
     const { app, db, eventId } = await createTestContext({ capacity: 10 });
     const booking = await book(app, eventId, 3);
-    db.prepare('UPDATE bookings SET expires_at = ? WHERE booking_reference = ?').run(
+    await db.run('UPDATE bookings SET expires_at = $1 WHERE booking_reference = $2', [
       new Date(Date.now() - 60_000).toISOString(),
       booking.bookingReference,
-    );
+    ]);
     const res = await request(app)
       .post(`/api/bookings/${booking.bookingReference}/payment`)
       .send({ paymentMethod: 'EBIRR' });
     assert.equal(res.status, 410);
     assert.equal(res.body.error.code, 'BOOKING_EXPIRED');
 
-    const event = db.prepare('SELECT reserved_seats FROM events WHERE id = ?').get(eventId) as {
-      reserved_seats: number;
-    };
+    const event = (await db.get<{ reserved_seats: number }>(
+      'SELECT reserved_seats FROM events WHERE id = $1',
+      [eventId],
+    )) as { reserved_seats: number };
     assert.equal(event.reserved_seats, 0);
   });
 
@@ -231,9 +235,9 @@ describe('POST /api/bookings/:ref/payment/verify (verify pull)', () => {
     assert.equal(again.body.verification, 'already-paid');
     assert.equal(again.body.booking.status, 'CONFIRMED');
 
-    const paidCount = db.prepare("SELECT COUNT(*) AS n FROM payments WHERE status = 'PAID'").get() as {
-      n: number;
-    };
+    const paidCount = (await db.get<{ n: number }>(
+      "SELECT COUNT(*)::int AS n FROM payments WHERE status = 'PAID'",
+    )) as { n: number };
     assert.equal(paidCount.n, 1);
   });
 
@@ -351,7 +355,9 @@ describe('POST /api/payments/webhook/:provider', () => {
     assert.equal(dup.status, 200);
     assert.equal(dup.body.outcome, 'already-processed');
 
-    const events = db.prepare('SELECT COUNT(*) AS n FROM webhook_events').get() as { n: number };
+    const events = (await db.get<{ n: number }>(
+      'SELECT COUNT(*)::int AS n FROM webhook_events',
+    )) as { n: number };
     assert.equal(events.n, 1);
   });
 
@@ -412,9 +418,10 @@ describe('GET /api/payments/callback/:provider', () => {
     assert.equal(res.status, 302);
     assert.match(res.headers.location as string, /\/pay\/return\?provider=stub/);
 
-    const row = db.prepare('SELECT status FROM bookings WHERE booking_reference = ?').get(
-      booking.bookingReference,
-    ) as { status: string };
+    const row = (await db.get<{ status: string }>(
+      'SELECT status FROM bookings WHERE booking_reference = $1',
+      [booking.bookingReference],
+    )) as { status: string };
     assert.equal(row.status, 'PENDING'); // callback alone never pays
   });
 });

@@ -7,13 +7,14 @@ at the **Arthur Rimbaud Museum, Harar, Ethiopia**.
 |----------|------------------------------------------------------------|
 | Frontend | React 19 + TypeScript + Tailwind CSS 4 (Vite)              |
 | Backend  | Express 5 + TypeScript (tsx)                               |
-| Database | SQLite (better-sqlite3, WAL mode) + versioned migrations   |
+| Database | PostgreSQL 17 + versioned migrations                      |
 | Auth     | bcrypt passwords + JWT in httpOnly cookies                 |
-| Tests    | node:test + supertest (29 backend tests)                   |
+| Tests    | node:test + supertest (73 backend tests)                   |
 
 ## Quick start
 
 ```bash
+docker compose up -d        # local Postgres 17 (or point DATABASE_URL elsewhere)
 npm install
 cp .env.example .env        # then review the values
 npm run db:seed             # create event + admin user
@@ -23,6 +24,10 @@ npm run dev:all             # web :5173 + api :3001 together
 Open http://localhost:5173 — the site, booking flow and admin area all run
 against the real database. Admin login: the `ADMIN_EMAIL` / `ADMIN_PASSWORD`
 from your `.env` (dev defaults: `admin@harar-cinema.local` / `change-me-dev-admin`).
+
+The backend test suite needs its own Postgres server + maintenance database to
+clone from: set `TEST_DATABASE_URL` (see `.env.example`) before
+`npm run test:server` — every test creates and drops its own isolated database.
 
 ## Project architecture
 
@@ -44,7 +49,7 @@ harar-cinema/
 ├── server/
 │   ├── src/
 │   │   ├── index.ts        # Entry: API (+ serves dist/ in production)
-│   │   ├── app.ts          # Express factory (tests use dbPath: ':memory:')
+│   │   ├── app.ts          # Express factory (tests use isolated PG DBs)
 │   │   ├── config.ts       # Env-driven config (dev fallbacks, strict in prod)
 │   │   ├── db/             # connection.ts, migrate.ts, types.ts, migrations/
 │   │   ├── lib/            # ids, errors, auth (bcrypt/JWT), rateLimit, http
@@ -53,9 +58,10 @@ harar-cinema/
 │   │   │                   # adminService, dto mappers
 │   │   ├── routes/         # publicEvents, publicBookings, admin{Auth,Events,…}
 │   │   └── seed.ts         # `npm run db:seed`
-│   └── tests/              # bookings, tickets, admin (node:test + supertest)
+│   └── tests/              # bookings, tickets, admin, payments, chapa, pg-concurrency
 ├── public/poster.jpg       # Official event poster (shown on /event)
-└── data/                   # SQLite file (git-ignored, created automatically)
+├── docker-compose.yml      # local Postgres 17 for development
+└── render.yaml             # Render Blueprint ($0 TEST: free web + Neon Postgres)
 ```
 
 ## Development commands
@@ -66,7 +72,7 @@ harar-cinema/
 | `npm run dev:server`   | API only with auto-reload (:3001)                   |
 | `npm run dev:all`      | Both together                                       |
 | `npm run db:seed`      | Migrate + seed event + admin (idempotent)           |
-| `npm run test:server`  | Backend test suite (isolated in-memory DBs)         |
+| `npm run test:server`  | Backend test suite (fresh Postgres DB per test)    |
 | `npm run typecheck`    | `tsc` for server + frontend                         |
 | `npm run build`        | Server typecheck + frontend typecheck + Vite build  |
 | `npm start`            | Production: API serving API + built site, one port  |
@@ -78,7 +84,8 @@ See `.env.example`. Summary:
 | Variable        | Purpose                                              |
 |-----------------|------------------------------------------------------|
 | `PORT`          | API port (default 3001)                              |
-| `DATABASE_PATH` | SQLite file (default `./data/harar-cinema.db`)       |
+| `DATABASE_URL`  | Postgres connection string (default: local compose)  |
+| `TEST_DATABASE_URL` | Tests-only server for per-test databases     |
 | `JWT_SECRET`    | Session signing secret — **required in production**  |
 | `ADMIN_*`       | Seed admin name/email/password for `db:seed`         |
 | `VITE_API_BASE` | API base for the frontend (default same-origin `/api`) |
@@ -88,9 +95,11 @@ Never commit `.env` — it is git-ignored.
 
 ## Database
 
-SQLite with WAL journal, foreign keys ON, and a 5s busy timeout.
-Schema lives in versioned files under `server/src/db/migrations/` and is
-applied automatically on boot (`schema_migrations` tracks what ran).
+PostgreSQL 17 behind a small `pg` pool (TLS comes from the connection
+string's `sslmode=require`). Schema lives in versioned files under
+`server/src/db/migrations/` and is applied automatically on boot
+(`schema_migrations` tracks what ran; Postgres runs each migration file
+transactionally).
 
 Tables: `events`, `bookings`, `tickets`, `admin_users`, `idempotency_keys`,
 `payments`, `webhook_events`.
@@ -107,12 +116,13 @@ Key integrity rules (enforced by the database itself, not just code):
 
 ### Oversell protection
 
-`createBooking` runs in an IMMEDIATE transaction and reserves seats with one
-atomic conditional update (`SET reserved_seats = reserved_seats + ? WHERE …
-reserved_seats + ? <= capacity`). Concurrent requests serialize on the write
-lock; losers get `409 INSUFFICIENT_CAPACITY` / `SOLD_OUT` with the live
-`remaining` count. Covered by a 20-way concurrent test that asserts exactly
-`capacity` bookings win.
+`createBooking` locks the event row (`SELECT … FOR UPDATE`) inside its
+transaction, then reserves seats with one atomic conditional update
+(`SET reserved_seats = reserved_seats + $1 WHERE … reserved_seats + $1 <=
+capacity`). Concurrent requests serialize on the row lock; losers get `409
+INSUFFICIENT_CAPACITY` / `SOLD_OUT` with the live `remaining` count. Covered
+by a 20-way concurrent test that asserts exactly `capacity` bookings win,
+plus `pg-concurrency` proofs for the payment and gate races.
 
 ### Idempotent bookings
 

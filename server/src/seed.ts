@@ -15,13 +15,13 @@ import { newId } from './lib/ids';
 const EVENT_ID = 'harar-open-air-cinema-001';
 
 async function main() {
-  const db = openDatabase(config.databasePath);
-  const applied = runMigrations(db);
+  const db = await openDatabase(config.databaseUrl);
+  const applied = await runMigrations(db);
   if (applied.length > 0) console.log(`[seed] Applied migrations: ${applied.join(', ')}`);
 
-  const existing = db.prepare('SELECT id FROM events WHERE id = ?').get(EVENT_ID) as
-    | { id: string }
-    | undefined;
+  const existing = await db.get<{ id: string }>('SELECT id FROM events WHERE id = $1', [
+    EVENT_ID,
+  ]);
   if (!existing) {
     const at = new Date().toISOString();
     const event: EventRow = {
@@ -43,31 +43,52 @@ async function main() {
       created_at: at,
       updated_at: at,
     };
-    db.prepare(
+    await db.run(
       `INSERT INTO events (id, title, movie_title, movie_poster, movie_trailer, movie_synopsis,
         event_date, start_time, venue_name, venue_location, ticket_price, capacity,
         reserved_seats, free_snack, status, created_at, updated_at)
-       VALUES (@id, @title, @movie_title, @movie_poster, @movie_trailer, @movie_synopsis,
-        @event_date, @start_time, @venue_name, @venue_location, @ticket_price, @capacity,
-        @reserved_seats, @free_snack, @status, @created_at, @updated_at)`,
-    ).run(event);
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      [
+        event.id,
+        event.title,
+        event.movie_title,
+        event.movie_poster,
+        event.movie_trailer,
+        event.movie_synopsis,
+        event.event_date,
+        event.start_time,
+        event.venue_name,
+        event.venue_location,
+        event.ticket_price,
+        event.capacity,
+        event.reserved_seats,
+        event.free_snack,
+        event.status,
+        event.created_at,
+        event.updated_at,
+      ],
+    );
     console.log('[seed] Created event: Harar Open Air Cinema (9-1-2019 EC, 11:00 LT, 250 ETB, cap 100)');
   } else {
     console.log('[seed] Event already exists — leaving it untouched.');
   }
 
   const email = config.seedAdminEmail.trim().toLowerCase();
-  const adminExists = db.prepare('SELECT id FROM admin_users WHERE email = ?').get(email) as
-    | { id: string }
-    | undefined;
+  const adminExists = await db.get<{ id: string }>(
+    'SELECT id FROM admin_users WHERE email = $1',
+    [email],
+  );
   if (!adminExists) {
-    db.prepare('INSERT INTO admin_users (id, name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
-      newId(),
-      config.seedAdminName,
-      email,
-      await hashPassword(config.seedAdminPassword),
-      'ADMIN',
-      new Date().toISOString(),
+    await db.run(
+      'INSERT INTO admin_users (id, name, email, password_hash, role, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+      [
+        newId(),
+        config.seedAdminName,
+        email,
+        await hashPassword(config.seedAdminPassword),
+        'ADMIN',
+        new Date().toISOString(),
+      ],
     );
     console.log(`[seed] Created admin user: ${email}`);
     if (!process.env.ADMIN_PASSWORD) {
@@ -77,7 +98,7 @@ async function main() {
     console.log(`[seed] Admin ${email} already exists — leaving it untouched.`);
   }
 
-  db.close();
+  await db.close();
   console.log('[seed] Done.');
 }
 

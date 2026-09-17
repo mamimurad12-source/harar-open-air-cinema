@@ -1,9 +1,11 @@
-import { after, beforeEach, describe, it } from 'node:test';
+import { after, afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import request from 'supertest';
-import { VALID_PHONE, authCookie, createTestContext } from './helper';
+import { VALID_PHONE, authCookie, closeTestDatabases, createTestContext } from './helper';
 import { __setAllowlistForTests, __setProvidersForTests } from '../src/services/payments/registry';
 import { StubProvider } from './stubProvider';
+
+afterEach(() => closeTestDatabases());
 
 type App = Parameters<typeof request>[0];
 
@@ -75,9 +77,10 @@ describe('POST /api/admin/tickets/validate', () => {
     assert.equal(res.body.validation.paymentStatus, 'PAID');
     assert.ok(res.body.validation.validatedAt);
 
-    const row = db.prepare('SELECT status FROM tickets WHERE qr_token = ?').get(token) as {
-      status: string;
-    };
+    const row = (await db.get<{ status: string }>(
+      'SELECT status FROM tickets WHERE qr_token = $1',
+      [token],
+    )) as { status: string };
     assert.equal(row.status, 'USED');
   });
 
@@ -142,9 +145,9 @@ describe('POST /api/admin/tickets/validate', () => {
     const { app, db, eventId } = await createTestContext();
     const sessionCookie = await adminSession(app);
     const booking = await bookAndPay(app, eventId);
-    db.prepare("UPDATE bookings SET status = 'CANCELLED' WHERE booking_reference = ?").run(
+    await db.run("UPDATE bookings SET status = 'CANCELLED' WHERE booking_reference = $1", [
       booking.bookingReference,
-    );
+    ]);
     const res = await request(app)
       .post('/api/admin/tickets/validate')
       .set(authCookie(sessionCookie))

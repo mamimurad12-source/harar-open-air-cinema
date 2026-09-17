@@ -1,27 +1,27 @@
-# Harar Open Air Cinema — PUBLIC HTTPS TEST deployment (Render Blueprint).
+# Harar Open Air Cinema — PUBLIC HTTPS TEST deployment (Render Blueprint, $0).
 # ONE web service: Express serves the API + built frontend from the same origin.
+# Database: Neon free-tier Postgres, created once in the Neon dashboard — its
+# connection string (already including ?sslmode=require) goes into DATABASE_URL.
 # Secrets are NEVER stored here (sync: false → entered in the Render dashboard).
 # No VITE_* variables: the frontend uses same-origin /api; mock mode stays off.
 # Node version is pinned via package.json "engines" + .node-version (Node 22).
+# Free behavior: the web service sleeps after 15 min idle (wakes in ~30-60 s);
+# Neon compute scales to zero and wakes in milliseconds. No disk is needed —
+# all booking/payment data lives in Neon and survives redeploys and sleeps.
 
 services:
   - type: web
     name: harar-cinema-test
     runtime: node
-    # Persistent disks require a paid instance type; free instances cannot mount one.
-    plan: starter
+    plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/events
-    disk:
-      name: harar-cinema-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       # Render injects PORT automatically — do not set it here. The server
       # listens on process.env.PORT (see server/src/config.ts + index.ts).
-      - key: DATABASE_PATH
-        value: /var/data/harar-cinema.db
+      - key: DATABASE_URL
+        sync: false # Neon Postgres connection string (from the Neon dashboard)
       - key: JWT_SECRET
         sync: false
       - key: ADMIN_NAME

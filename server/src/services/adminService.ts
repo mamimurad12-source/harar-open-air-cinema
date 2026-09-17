@@ -20,9 +20,9 @@ export async function verifyAdminCredentials(
   email: string,
   password: string,
 ): Promise<SafeAdminUser | null> {
-  const user = db.prepare('SELECT * FROM admin_users WHERE email = ?').get(email.trim().toLowerCase()) as
-    | AdminUserRow
-    | undefined;
+  const user = await db.get<AdminUserRow>('SELECT * FROM admin_users WHERE email = $1', [
+    email.trim().toLowerCase(),
+  ]);
   // Dummy hash keeps timing indistinguishable for unknown emails.
   const dummyHash = '$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy';
   const ok = await verifyPassword(password, user?.password_hash ?? dummyHash);
@@ -30,13 +30,13 @@ export async function verifyAdminCredentials(
   return { id: user.id, name: user.name, email: user.email, role: user.role };
 }
 
-export function listEvents(db: Db): EventDto[] {
-  const rows = db.prepare('SELECT * FROM events ORDER BY created_at DESC').all() as EventRow[];
+export async function listEvents(db: Db): Promise<EventDto[]> {
+  const rows = await db.all<EventRow>('SELECT * FROM events ORDER BY created_at DESC');
   return rows.map(toEventDto);
 }
 
-export function getEventAdmin(db: Db, id: string): EventDto {
-  const row = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as EventRow | undefined;
+export async function getEventAdmin(db: Db, id: string): Promise<EventDto> {
+  const row = await db.get<EventRow>('SELECT * FROM events WHERE id = $1', [id]);
   if (!row) throw notFound('EVENT_NOT_FOUND', 'Event not found.');
   return toEventDto(row);
 }
@@ -49,8 +49,8 @@ export interface EventInput {
   movieSynopsis?: string | null;
   date?: string;
   startTime?: string;
-  venueName?: string;
-  venueLocation?: string;
+  venueName?: string | null;
+  venueLocation?: string | null;
   ticketPrice?: number;
   capacity?: number;
   freeSnack?: boolean;
@@ -87,7 +87,7 @@ function cleanCapacity(value: unknown): number {
   return value as number;
 }
 
-export function createEvent(db: Db, input: EventInput): EventDto {
+export async function createEvent(db: Db, input: EventInput): Promise<EventDto> {
   const at = new Date().toISOString();
   const id = newId();
   const row: EventRow = {
@@ -112,19 +112,36 @@ export function createEvent(db: Db, input: EventInput): EventDto {
   if (!['DRAFT', 'PUBLISHED', 'CANCELLED', 'COMPLETED'].includes(row.status)) {
     throw badRequest('VALIDATION_ERROR', 'Invalid status.');
   }
-  db.prepare(
+  await db.run(
     `INSERT INTO events (id, title, movie_title, movie_poster, movie_trailer, movie_synopsis,
       event_date, start_time, venue_name, venue_location, ticket_price, capacity,
       reserved_seats, free_snack, status, created_at, updated_at)
-     VALUES (@id, @title, @movie_title, @movie_poster, @movie_trailer, @movie_synopsis,
-      @event_date, @start_time, @venue_name, @venue_location, @ticket_price, @capacity,
-      @reserved_seats, @free_snack, @status, @created_at, @updated_at)`,
-  ).run(row);
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+    [
+      row.id,
+      row.title,
+      row.movie_title,
+      row.movie_poster,
+      row.movie_trailer,
+      row.movie_synopsis,
+      row.event_date,
+      row.start_time,
+      row.venue_name,
+      row.venue_location,
+      row.ticket_price,
+      row.capacity,
+      row.reserved_seats,
+      row.free_snack,
+      row.status,
+      row.created_at,
+      row.updated_at,
+    ],
+  );
   return toEventDto(row);
 }
 
-export function updateEvent(db: Db, id: string, patch: EventInput): EventDto {
-  const current = db.prepare('SELECT * FROM events WHERE id = ?').get(id) as EventRow | undefined;
+export async function updateEvent(db: Db, id: string, patch: EventInput): Promise<EventDto> {
+  const current = await db.get<EventRow>('SELECT * FROM events WHERE id = $1', [id]);
   if (!current) throw notFound('EVENT_NOT_FOUND', 'Event not found.');
 
   const next: EventRow = { ...current };
@@ -157,13 +174,30 @@ export function updateEvent(db: Db, id: string, patch: EventInput): EventDto {
   }
   next.updated_at = new Date().toISOString();
 
-  db.prepare(
-    `UPDATE events SET title = @title, movie_title = @movie_title, movie_poster = @movie_poster,
-      movie_trailer = @movie_trailer, movie_synopsis = @movie_synopsis, event_date = @event_date,
-      start_time = @start_time, venue_name = @venue_name, venue_location = @venue_location,
-      ticket_price = @ticket_price, capacity = @capacity, free_snack = @free_snack,
-      status = @status, updated_at = @updated_at WHERE id = @id`,
-  ).run(next);
+  await db.run(
+    `UPDATE events SET title = $1, movie_title = $2, movie_poster = $3,
+      movie_trailer = $4, movie_synopsis = $5, event_date = $6,
+      start_time = $7, venue_name = $8, venue_location = $9,
+      ticket_price = $10, capacity = $11, free_snack = $12,
+      status = $13, updated_at = $14 WHERE id = $15`,
+    [
+      next.title,
+      next.movie_title,
+      next.movie_poster,
+      next.movie_trailer,
+      next.movie_synopsis,
+      next.event_date,
+      next.start_time,
+      next.venue_name,
+      next.venue_location,
+      next.ticket_price,
+      next.capacity,
+      next.free_snack,
+      next.status,
+      next.updated_at,
+      id,
+    ],
+  );
   return toEventDto(next);
 }
 
@@ -181,27 +215,30 @@ export interface BookingListItem {
   createdAt: string;
 }
 
-export function listBookings(
+export async function listBookings(
   db: Db,
   options: { eventId?: string; limit: number; offset: number },
-): { bookings: BookingListItem[]; total: number } {
+): Promise<{ bookings: BookingListItem[]; total: number }> {
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (options.eventId) {
-    clauses.push('b.event_id = ?');
+    clauses.push(`b.event_id = $${params.length + 1}`);
     params.push(options.eventId);
   }
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-  const totalRow = db
-    .prepare(`SELECT COUNT(*) AS count FROM bookings b ${where}`)
-    .get(...params) as { count: number };
-  const rows = db
-    .prepare(
-      `SELECT b.*, e.title AS event_title FROM bookings b
-       JOIN events e ON e.id = b.event_id
-       ${where} ORDER BY b.created_at DESC LIMIT ? OFFSET ?`,
-    )
-    .all(...params, options.limit, options.offset) as Array<BookingRow & { event_title: string }>;
+  // COUNT(*)::int — node-postgres returns bare COUNT(*) (bigint) as a string;
+  // the API contract is a JSON number, so cast at the source.
+  const totalRow = (await db.get<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM bookings b ${where}`,
+    params,
+  )) as { count: number };
+  params.push(options.limit, options.offset);
+  const rows = await db.all<BookingRow & { event_title: string }>(
+    `SELECT b.*, e.title AS event_title FROM bookings b
+     JOIN events e ON e.id = b.event_id
+     ${where} ORDER BY b.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  );
   return {
     total: totalRow.count,
     bookings: rows.map((r) => ({
@@ -220,15 +257,18 @@ export function listBookings(
   };
 }
 
-export function getBookingDetail(db: Db, reference: string): BookingDto {
+export async function getBookingDetail(db: Db, reference: string): Promise<BookingDto> {
   const ref = reference.trim().toUpperCase();
-  const booking = db
-    .prepare('SELECT * FROM bookings WHERE booking_reference = ?')
-    .get(ref) as BookingRow | undefined;
+  const booking = await db.get<BookingRow>('SELECT * FROM bookings WHERE booking_reference = $1', [
+    ref,
+  ]);
   if (!booking) throw notFound('BOOKING_NOT_FOUND', 'Booking not found.');
-  const tickets = db
-    .prepare('SELECT * FROM tickets WHERE booking_id = ? ORDER BY created_at ASC')
-    .all(booking.id) as TicketRow[];
-  const event = db.prepare('SELECT * FROM events WHERE id = ?').get(booking.event_id) as EventRow;
+  const tickets = await db.all<TicketRow>(
+    'SELECT * FROM tickets WHERE booking_id = $1 ORDER BY created_at ASC',
+    [booking.id],
+  );
+  const event = (await db.get<EventRow>('SELECT * FROM events WHERE id = $1', [
+    booking.event_id,
+  ])) as EventRow;
   return toBookingDto(booking, tickets, event);
 }

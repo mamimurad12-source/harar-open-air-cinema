@@ -1,6 +1,6 @@
 /** Public event catalog — published events only. */
 import { Router } from 'express';
-import type { Db } from '../db/connection';
+import type { RootDb } from '../db/connection';
 import type { EventRow } from '../db/types';
 import { asyncHandler, notFound } from '../lib/errors';
 import { toEventDto } from '../services/dto';
@@ -11,11 +11,11 @@ export const publicEvents = Router();
 publicEvents.get(
   '/',
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
-    expireStaleBookings(db);
-    const rows = db
-      .prepare(`SELECT * FROM events WHERE status = 'PUBLISHED' ORDER BY created_at DESC`)
-      .all() as EventRow[];
+    const db = req.app.locals.db as RootDb;
+    await expireStaleBookings(db);
+    const rows = await db.all<EventRow>(
+      `SELECT * FROM events WHERE status = 'PUBLISHED' ORDER BY created_at DESC`,
+    );
     res.json({ events: rows.map(toEventDto) });
   }),
 );
@@ -23,11 +23,9 @@ publicEvents.get(
 publicEvents.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const db = req.app.locals.db as Db;
-    expireStaleBookings(db);
-    const row = db.prepare('SELECT * FROM events WHERE id = ?').get(req.params.id) as
-      | EventRow
-      | undefined;
+    const db = req.app.locals.db as RootDb;
+    await expireStaleBookings(db);
+    const row = await db.get<EventRow>('SELECT * FROM events WHERE id = $1', [req.params.id]);
     if (!row || row.status !== 'PUBLISHED') {
       throw notFound('EVENT_NOT_FOUND', 'Event not found.');
     }

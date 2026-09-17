@@ -1,4 +1,4 @@
-/** Row shapes as stored in SQLite. API DTOs are mapped in services/dto.ts. */
+/** Row shapes as stored in Postgres. API DTOs are mapped in services/dto.ts. */
 
 export type EventStatus = 'DRAFT' | 'PUBLISHED' | 'CANCELLED' | 'COMPLETED';
 export type BookingStatus = 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED';
