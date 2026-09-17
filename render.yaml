@@ -16,6 +16,9 @@ services:
     plan: free
     buildCommand: npm ci && npm run build
     startCommand: npm start
+    # Seeds the premiere event + admin user (idempotent — existing rows are
+    # never touched). Runs before every deploy; no Shell access needed.
+    preDeployCommand: npm run db:seed
     healthCheckPath: /api/events
     envVars:
       # Render injects PORT automatically — do not set it here. The server

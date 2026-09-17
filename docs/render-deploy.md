@@ -25,16 +25,17 @@ When prompted for `sync: false` values:
 - `CHAPA_SECRET_KEY`: leave empty for now (app treats empty as unconfigured).
   Paste the Chapa **test** secret here only when it arrives. Never a live key.
 
-## 2. Seed (one-off, after first boot)
+## 2. Seed (automatic — no Shell needed)
 
-Render Dashboard → service → Shell:
+`render.yaml` sets `preDeployCommand: npm run db:seed`, so every deploy seeds
+the database before going live: it creates the admin user + premiere event
+only if missing. It never touches payments (verified: no payment code in
+`server/src/seed.ts`), never overwrites existing rows, and never touches
+customer bookings. Locally, the same command seeds a dev database:
 
 ```sh
 npm run db:seed
 ```
-
-Idempotent: creates the admin user + premiere event only if missing. It never
-touches payments (verified: no payment code in `server/src/seed.ts`).
 
 ## 3. Verify the deployment
 

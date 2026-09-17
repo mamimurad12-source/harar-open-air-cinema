@@ -1,9 +1,14 @@
 /**
  * Development seed: the real Harar Open Air Cinema event (facts from the
- * official poster) + one admin user. Idempotent — safe to run repeatedly.
+ * official poster) + one admin user. Idempotent — safe to run repeatedly,
+ * including concurrently (each INSERT is a no-op on conflict, so overlapping
+ * runs can neither duplicate nor overwrite anything).
  * Customer bookings are NEVER seeded; the box office starts at zero.
  *
  *   npm run db:seed
+ *
+ * Production: Render runs this automatically before every deploy
+ * (render.yaml `preDeployCommand`) — no Shell access needed.
  */
 import { config } from './config';
 import { openDatabase } from './db/connection';
@@ -43,11 +48,14 @@ async function main() {
       created_at: at,
       updated_at: at,
     };
-    await db.run(
+    // ON CONFLICT: a concurrent seed run may insert first — that must be a
+    // no-op here, never an error and never an overwrite.
+    const inserted = await db.run(
       `INSERT INTO events (id, title, movie_title, movie_poster, movie_trailer, movie_synopsis,
         event_date, start_time, venue_name, venue_location, ticket_price, capacity,
         reserved_seats, free_snack, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+       ON CONFLICT (id) DO NOTHING`,
       [
         event.id,
         event.title,
@@ -68,7 +76,11 @@ async function main() {
         event.updated_at,
       ],
     );
-    console.log('[seed] Created event: Harar Open Air Cinema (9-1-2019 EC, 11:00 LT, 250 ETB, cap 100)');
+    if (inserted.changes === 0) {
+      console.log('[seed] Event already exists — leaving it untouched.');
+    } else {
+      console.log('[seed] Created event: Harar Open Air Cinema (9-1-2019 EC, 11:00 LT, 250 ETB, cap 100)');
+    }
   } else {
     console.log('[seed] Event already exists — leaving it untouched.');
   }
@@ -79,8 +91,8 @@ async function main() {
     [email],
   );
   if (!adminExists) {
-    await db.run(
-      'INSERT INTO admin_users (id, name, email, password_hash, role, created_at) VALUES ($1, $2, $3, $4, $5, $6)',
+    const created = await db.run(
+      'INSERT INTO admin_users (id, name, email, password_hash, role, created_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (email) DO NOTHING',
       [
         newId(),
         config.seedAdminName,
@@ -90,9 +102,13 @@ async function main() {
         new Date().toISOString(),
       ],
     );
-    console.log(`[seed] Created admin user: ${email}`);
-    if (!process.env.ADMIN_PASSWORD) {
-      console.log('[seed] Using default DEV password "change-me-dev-admin" — set ADMIN_PASSWORD in .env.');
+    if (created.changes === 0) {
+      console.log(`[seed] Admin ${email} already exists — leaving it untouched.`);
+    } else {
+      console.log(`[seed] Created admin user: ${email}`);
+      if (!process.env.ADMIN_PASSWORD) {
+        console.log('[seed] Using default DEV password "change-me-dev-admin" — set ADMIN_PASSWORD in .env.');
+      }
     }
   } else {
     console.log(`[seed] Admin ${email} already exists — leaving it untouched.`);
