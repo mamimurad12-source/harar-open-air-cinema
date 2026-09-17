@@ -1,0 +1,46 @@
+# Harar Open Air Cinema — PUBLIC HTTPS TEST deployment (Render Blueprint).
+# ONE web service: Express serves the API + built frontend from the same origin.
+# Secrets are NEVER stored here (sync: false → entered in the Render dashboard).
+# No VITE_* variables: the frontend uses same-origin /api; mock mode stays off.
+# Node version is pinned via package.json "engines" + .node-version (Node 22).
+
+services:
+  - type: web
+    name: harar-cinema-test
+    runtime: node
+    # Persistent disks require a paid instance type; free instances cannot mount one.
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/events
+    disk:
+      name: harar-cinema-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # Render injects PORT automatically — do not set it here. The server
+      # listens on process.env.PORT (see server/src/config.ts + index.ts).
+      - key: DATABASE_PATH
+        value: /var/data/harar-cinema.db
+      - key: JWT_SECRET
+        sync: false
+      - key: ADMIN_NAME
+        value: Harar Cinema Admin
+      - key: ADMIN_EMAIL
+        value: admin@harar-cinema.local
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: CHAPA_SECRET_KEY
+        sync: false
+      - key: CHAPA_MODE
+        value: test
+      # PAYMENT_METHODS intentionally omitted: unset = nothing advertised
+      # (fail closed). Add codes later, one rail at a time, only after each
+      # rail completes a real Chapa test checkout. Example:
+      # - key: PAYMENT_METHODS
+      #   value: TELEBIRR
+      # PUBLIC_BASE_URL / PUBLIC_API_URL intentionally omitted: the app falls
+      # back to Render's injected RENDER_EXTERNAL_URL (public https origin).
+      # Set them explicitly only when using a custom domain.
+      - key: PAYMENT_WINDOW_MINUTES
+        value: 30

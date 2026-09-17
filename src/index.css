@@ -1,0 +1,224 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Fraunces", "Georgia", serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  /* Retro poster script — matches the "Open Air Cinema" lettering */
+  --font-script: "Pattaya", "Snell Roundhand", cursive;
+
+  /* Warm cream / off-white — poster paper */
+  --color-cream-50: #fdfbf4;
+  --color-cream-100: #faf4e6;
+  --color-cream-200: #f3e9d2;
+  --color-cream-300: #e7d6b0;
+  --color-cream-400: #d6be8b;
+
+  /* Warm near-black ink */
+  --color-ink-950: #120d08;
+  --color-ink-900: #1c1410;
+  --color-ink-800: #2a2018;
+  --color-ink-700: #3d3025;
+  --color-ink-500: #6b5d4c;
+  --color-ink-400: #8a795f;
+
+  /* Deep poster red */
+  --color-wine-400: #c14a4a;
+  --color-wine-500: #a83232;
+  --color-wine-600: #8e2323;
+  --color-wine-700: #751a1a;
+  --color-wine-800: #5c1414;
+  --color-wine-900: #421010;
+
+  /* Marquee gold */
+  --color-gold-300: #e8ce7a;
+  --color-gold-400: #d9b545;
+  --color-gold-500: #c39a2b;
+  --color-gold-600: #9c7a1f;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-cream-100 font-sans text-ink-950 antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--color-wine-700);
+  color: var(--color-cream-100);
+}
+
+/* ---------- Cinema helpers ---------- */
+
+/* Black film-strip bar with sprocket holes top & bottom */
+.film-strip {
+  background:
+    repeating-linear-gradient(
+        to right,
+        rgba(250, 244, 230, 0.92) 0 14px,
+        transparent 14px 30px
+      )
+      top 7px left 14px / 100% 9px no-repeat,
+    repeating-linear-gradient(
+        to right,
+        rgba(250, 244, 230, 0.92) 0 14px,
+        transparent 14px 30px
+      )
+      bottom 7px left 14px / 100% 9px no-repeat,
+    var(--color-ink-950);
+}
+
+/* Twinkling night-sky stars (two depths) */
+.stars,
+.stars-deep {
+  background-repeat: repeat;
+  pointer-events: none;
+}
+.stars {
+  background-image:
+    radial-gradient(1.3px 1.3px at 22px 34px, rgba(253, 251, 244, 0.9) 50%, transparent 51%),
+    radial-gradient(1px 1px at 130px 90px, rgba(253, 251, 244, 0.7) 50%, transparent 51%),
+    radial-gradient(1.6px 1.6px at 210px 40px, rgba(232, 206, 122, 0.85) 50%, transparent 51%),
+    radial-gradient(1px 1px at 300px 130px, rgba(253, 251, 244, 0.6) 50%, transparent 51%),
+    radial-gradient(1.2px 1.2px at 70px 170px, rgba(253, 251, 244, 0.75) 50%, transparent 51%),
+    radial-gradient(1px 1px at 260px 200px, rgba(253, 251, 244, 0.55) 50%, transparent 51%);
+  background-size: 340px 240px;
+}
+.stars-deep {
+  background-image:
+    radial-gradient(1px 1px at 60px 60px, rgba(253, 251, 244, 0.4) 50%, transparent 51%),
+    radial-gradient(1px 1px at 180px 150px, rgba(253, 251, 244, 0.35) 50%, transparent 51%),
+    radial-gradient(1.4px 1.4px at 320px 80px, rgba(253, 251, 244, 0.45) 50%, transparent 51%),
+    radial-gradient(1px 1px at 120px 220px, rgba(232, 206, 122, 0.4) 50%, transparent 51%);
+  background-size: 420px 300px;
+}
+
+/* Subtle film grain overlay */
+.grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");
+}
+
+/* Ticket perforation lines (as utilities, so sm:/md: variants work) */
+@utility ticket-dash-h {
+  background-image: linear-gradient(to right, var(--color-ink-500) 55%, transparent 45%);
+  background-size: 12px 1.5px;
+  background-repeat: repeat-x;
+  height: 1.5px;
+  opacity: 0.55;
+}
+@utility ticket-dash-v {
+  background-image: linear-gradient(to bottom, var(--color-ink-500) 55%, transparent 45%);
+  background-size: 1.5px 12px;
+  background-repeat: repeat-y;
+  width: 1.5px;
+  opacity: 0.55;
+}
+
+/* ---------- Motion (subtle & fast) ---------- */
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.animate-marquee {
+  animation: marquee 26s linear infinite;
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.animate-twinkle {
+  animation: twinkle 4.5s ease-in-out infinite;
+}
+.animate-twinkle-slow {
+  animation: twinkle 7s ease-in-out infinite reverse;
+}
+
+@keyframes sway {
+  from {
+    transform: rotate(-2.5deg);
+    opacity: 0.75;
+  }
+  to {
+    transform: rotate(2.5deg);
+    opacity: 1;
+  }
+}
+.animate-sway {
+  animation: sway 9s ease-in-out infinite alternate;
+  transform-origin: bottom center;
+}
+
+@keyframes float-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+.animate-float-soft {
+  animation: float-soft 6s ease-in-out infinite;
+}
+
+@keyframes bulb-glow {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.animate-bulb {
+  animation: bulb-glow 3.2s ease-in-out infinite;
+}
+
+@keyframes cue-drop {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.9;
+  }
+  50% {
+    transform: translateY(8px);
+    opacity: 0.5;
+  }
+}
+.animate-cue {
+  animation: cue-drop 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-marquee,
+  .animate-twinkle,
+  .animate-twinkle-slow,
+  .animate-sway,
+  .animate-float-soft,
+  .animate-bulb,
+  .animate-cue {
+    animation: none;
+  }
+}
