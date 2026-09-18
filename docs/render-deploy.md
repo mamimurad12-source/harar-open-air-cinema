@@ -24,6 +24,9 @@ When prompted for `sync: false` values:
 - `ADMIN_PASSWORD`: a strong unique password.
 - `CHAPA_SECRET_KEY`: leave empty for now (app treats empty as unconfigured).
   Paste the Chapa **test** secret here only when it arrives. Never a live key.
+- `CHAPA_WEBHOOK_SECRET`: leave empty for now. Paste the dashboard webhook
+  **Secret Hash** here only when registering the webhook (a separate secret —
+  never reuse the API key; empty = every webhook is rejected).
 
 ## 2. Seed (automatic — no Shell needed)
 
@@ -76,7 +79,9 @@ wakes in milliseconds). After that it is fast until the next idle period.
 ## 4. After Chapa test credentials arrive (later — not now)
 
 1. Dashboard → Environment → set `CHAPA_SECRET_KEY` to the **test** secret
-   (keep `CHAPA_MODE=test`), save (redeploys).
+   (keep `CHAPA_MODE=test`). Also set `CHAPA_WEBHOOK_SECRET` to the dashboard
+   webhook **Secret Hash** (a separate secret — never the API key), save
+   (redeploys).
 2. Register the webhook URL in the Chapa dashboard:
    `https://<service>.onrender.com/api/payments/webhook/chapa`
 3. Run one real test checkout per rail; confirm the ledger row flips `PAID`

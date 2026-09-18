@@ -17,6 +17,7 @@ function productionProviders(): PaymentProvider[] {
   return [
     new ChapaAdapter({
       secretKey: config.chapa.secretKey,
+      webhookSecret: config.chapa.webhookSecret,
       mode: config.chapa.mode,
       baseUrl: config.chapa.baseUrl,
     }),

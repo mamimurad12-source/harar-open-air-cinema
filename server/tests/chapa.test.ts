@@ -2,6 +2,8 @@
  * Chapa adapter tests. The network boundary is stubbed (we control fetch),
  * so these verify OUR mapping to the documented Chapa API shapes:
  * initialize payload, verify mapping, HMAC webhook auth.
+ * The webhook secret is separate from the API key — several tests pin that
+ * separation (API key signs API calls; only the webhook secret signs webhooks).
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +26,12 @@ function adapterWithFetch(handler: (url: string, init?: RequestInit) => Response
     return handler(String(url), init);
   }) as unknown as FetchStub;
   const adapter = new ChapaAdapter(
-    { secretKey: 'test-secret-key', mode: 'test', baseUrl: 'https://api.chapa.co/v1' },
+    {
+      secretKey: 'test-secret-key',
+      webhookSecret: 'test-webhook-secret',
+      mode: 'test',
+      baseUrl: 'https://api.chapa.co/v1',
+    },
     stubFetch,
   );
   return { adapter, calls };
@@ -83,7 +90,7 @@ describe('ChapaAdapter.createPayment', () => {
     }), /Chapa initialize failed/);
 
     const unreachable = new ChapaAdapter(
-      { secretKey: 'k', mode: 'test', baseUrl: 'https://api.chapa.co/v1' },
+      { secretKey: 'k', webhookSecret: 'wh', mode: 'test', baseUrl: 'https://api.chapa.co/v1' },
       (async () => {
         throw new TypeError('fetch failed');
       }) as unknown as FetchStub,
@@ -103,7 +110,12 @@ describe('ChapaAdapter.createPayment', () => {
 });
 
 describe('ChapaAdapter.verifyPayment', () => {
-  const ctx = { secretKey: 'k', mode: 'test' as const, baseUrl: 'https://api.chapa.co/v1' };
+  const ctx = {
+    secretKey: 'k',
+    webhookSecret: 'wh',
+    mode: 'test' as const,
+    baseUrl: 'https://api.chapa.co/v1',
+  };
 
   it('maps documented verify statuses to verdicts', async () => {
     const { adapter } = adapterWithFetch((url) => {
@@ -155,6 +167,11 @@ describe('ChapaAdapter.verifyPayment', () => {
     );
     assert.equal((await adapter.verifyPayment('gone')).verdict, 'UNKNOWN');
     assert.equal(calls[0]?.url, 'https://api.chapa.co/v1/transaction/verify/gone');
+    // Verify authenticates with the API key (never the webhook secret).
+    assert.equal(
+      (calls[0]?.init?.headers as Record<string, string>).Authorization,
+      'Bearer test-secret-key',
+    );
 
     const authed = new ChapaAdapter(ctx, (async () =>
       jsonResponse(401, { message: 'Invalid API key' })) as unknown as FetchStub);
@@ -164,7 +181,15 @@ describe('ChapaAdapter.verifyPayment', () => {
 
 describe('ChapaAdapter.parseWebhook', () => {
   const secret = 'whsec-test';
-  const make = () => new ChapaAdapter({ secretKey: secret, mode: 'test', baseUrl: 'https://x' });
+  // secretKey ≠ webhookSecret on purpose: proves webhooks verify against the
+  // webhook secret only, never the API key.
+  const make = () =>
+    new ChapaAdapter({
+      secretKey: 'api-key-must-not-verify-webhooks',
+      webhookSecret: secret,
+      mode: 'test',
+      baseUrl: 'https://x',
+    });
   const payload = {
     event: 'charge.success',
     tx_ref: 'hoc-HOC-ABC123-X7K2',
@@ -197,6 +222,34 @@ describe('ChapaAdapter.parseWebhook', () => {
     const bad = Buffer.from('not-json{{{', 'utf8');
     const sig = crypto.createHmac('sha256', secret).update(bad).digest('hex');
     assert.equal(await make().parseWebhook(raw, { 'chapa-signature': sig }), null);
+  });
+
+  it('rejects signatures made with the API key instead of the webhook secret', async () => {
+    const raw = Buffer.from(JSON.stringify(payload), 'utf8');
+    const signedWithApiKey = crypto
+      .createHmac('sha256', 'api-key-must-not-verify-webhooks')
+      .update(raw)
+      .digest('hex');
+    assert.equal(
+      await make().parseWebhook(raw, { 'x-chapa-signature': signedWithApiKey }),
+      null,
+    );
+    assert.equal(
+      await make().parseWebhook(raw, { 'chapa-signature': signedWithApiKey }),
+      null,
+    );
+  });
+
+  it('fails closed when the webhook secret is missing', async () => {
+    const noSecret = new ChapaAdapter({
+      secretKey: 'api-key-must-not-verify-webhooks',
+      webhookSecret: '',
+      mode: 'test',
+      baseUrl: 'https://x',
+    });
+    const raw = Buffer.from(JSON.stringify(payload), 'utf8');
+    const sig = crypto.createHmac('sha256', secret).update(raw).digest('hex');
+    assert.equal(await noSecret.parseWebhook(raw, { 'x-chapa-signature': sig }), null);
   });
 });
 

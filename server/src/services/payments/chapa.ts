@@ -12,7 +12,8 @@
  *   tx_ref, reference, method, mode}
  * - Webhook POST JSON {event, tx_ref, reference, amount, currency, status,
  *   mode, payment_method}; authenticity = HMAC-SHA256 hex of the JSON payload
- *   with the secret key, in `chapa-signature` or `x-chapa-signature`.
+ *   with the dashboard's webhook Secret Hash (never the API key), in
+ *   `chapa-signature` or `x-chapa-signature`.
  * - Docs order us to re-query verify before crediting, and to be idempotent.
  */
 import crypto from 'node:crypto';
@@ -26,7 +27,13 @@ import type {
 } from './types';
 
 export interface ChapaConfig {
+  /** API authentication only (initialize + verify). Never verifies webhooks. */
   secretKey: string;
+  /**
+   * Dashboard webhook "Secret Hash" — the ONLY key that authenticates
+   * inbound webhooks. Empty = every webhook is rejected (fail closed).
+   */
+  webhookSecret: string;
   mode: 'test' | 'live';
   baseUrl: string;
 }
@@ -200,6 +207,10 @@ export class ChapaAdapter implements PaymentProvider {
     headers: Record<string, string | string[] | undefined>,
   ): Promise<WebhookParseResult | null> {
     this.requireConfigured();
+    // Fail closed: without the webhook secret nothing can be authenticated,
+    // so every webhook is rejected (caller turns null into 401, no state).
+    const webhookSecret = this.config.webhookSecret;
+    if (!webhookSecret) return null;
     const provided = header(headers, 'x-chapa-signature') || header(headers, 'chapa-signature');
     if (!provided) return null;
 
@@ -215,7 +226,7 @@ export class ChapaAdapter implements PaymentProvider {
     let authentic = false;
     for (const candidate of candidates) {
       const expected = crypto
-        .createHmac('sha256', this.config.secretKey)
+        .createHmac('sha256', webhookSecret)
         .update(candidate, 'utf8')
         .digest('hex');
       const a = Buffer.from(expected, 'utf8');

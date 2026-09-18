@@ -91,6 +91,12 @@ export const config = {
   chapa: {
     /** Empty = Chapa not configured → all methods show "Coming soon". */
     secretKey: process.env.CHAPA_SECRET_KEY ?? '',
+    /**
+     * Dashboard webhook "Secret Hash" — the ONLY key that authenticates
+     * inbound webhooks. Empty = every webhook is rejected (fail closed).
+     * Never reuse the API key here; the two secrets have different jobs.
+     */
+    webhookSecret: process.env.CHAPA_WEBHOOK_SECRET ?? '',
     mode: (process.env.CHAPA_MODE ?? 'test') as 'test' | 'live',
     baseUrl: (process.env.CHAPA_BASE_URL ?? 'https://api.chapa.co/v1').replace(/\/+$/, ''),
   },

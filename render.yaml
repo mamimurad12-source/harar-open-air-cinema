@@ -35,6 +35,8 @@ services:
         sync: false
       - key: CHAPA_SECRET_KEY
         sync: false
+      - key: CHAPA_WEBHOOK_SECRET
+        sync: false # dashboard webhook "Secret Hash" (authenticates webhooks only)
       - key: CHAPA_MODE
         value: test
       # PAYMENT_METHODS intentionally omitted: unset = nothing advertised

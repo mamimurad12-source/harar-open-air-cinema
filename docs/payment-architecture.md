@@ -107,10 +107,12 @@ limits). Initiation/webhook payloads are size-capped.
 
 ## Security
 
-- Secrets (`CHAPA_SECRET_KEY`, …) are server-side env vars only — never in
-  `VITE_*`, never in responses, never committed (`.env.example` is a blank template).
-- Webhook HMAC uses timing-safe comparison over raw bytes; failures are 401
-  with zero state change.
+- Secrets (`CHAPA_SECRET_KEY`, `CHAPA_WEBHOOK_SECRET`) are server-side env
+  vars only — never in `VITE_*`, never in responses, never committed
+  (`.env.example` is a blank template). The API key authenticates Chapa API
+  calls; only the separate webhook Secret Hash authenticates webhooks.
+- Webhook HMAC (keyed by `CHAPA_WEBHOOK_SECRET`) uses timing-safe comparison
+  over raw bytes; failures are 401 with zero state change.
 - Status/verify endpoints require the booking phone; wrong phone returns the
   same 404 as an unknown reference.
 - No `VITE_` payment secrets exist; the frontend only ever receives a checkout
@@ -129,7 +131,9 @@ shapes (network stubbed). No real rail is touched; no sandbox success is faked.
 
 1. Create a Chapa merchant account and complete business verification.
 2. In test mode, copy the test **secret** key → `CHAPA_SECRET_KEY`, keep
-   `CHAPA_MODE=test`.
+   `CHAPA_MODE=test`. Copy the dashboard webhook **Secret Hash** →
+   `CHAPA_WEBHOOK_SECRET` (this secret — never the API key — authenticates
+   webhooks).
 3. Set `PUBLIC_API_URL` to the publicly reachable API base (webhooks +
    customer callback) and `PUBLIC_BASE_URL` to the site URL; register
    `<PUBLIC_API_URL>/api/payments/webhook/chapa` as the webhook URL and the
