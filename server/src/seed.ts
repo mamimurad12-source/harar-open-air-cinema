@@ -9,6 +9,11 @@
  * - CLI: `npm run db:seed` (manual / preDeployCommand).
  * - App boot: `index.ts` calls `seedDatabase()` after migrations and before
  *   listening, so a fresh database always has its event without Shell access.
+ *
+ * One-time password reset: when ADMIN_PASSWORD_RESET is exactly 'true', the
+ * seed additionally rewrites the EXISTING seed admin's password hash from
+ * ADMIN_PASSWORD (see resetSeedAdminPassword). Anything else — including an
+ * absent flag — leaves passwords untouched. Remove the flag after verifying.
  */
 import { config } from './config';
 import type { RootDb } from './db/connection';
@@ -113,6 +118,35 @@ export async function seedDatabase(db: RootDb): Promise<void> {
     }
   } else {
     console.log(`[seed] Admin ${email} already exists — leaving it untouched.`);
+  }
+
+  // Explicit one-time password reset — ONLY when ADMIN_PASSWORD_RESET is
+  // exactly 'true'. Updates the EXISTING seed admin's hash from
+  // ADMIN_PASSWORD. Never creates or deletes. Refuses when ADMIN_PASSWORD
+  // is empty rather than resetting to any default.
+  if (config.adminPasswordReset) {
+    await resetSeedAdminPassword(db, email);
+  }
+}
+
+/**
+ * One-time reset worker. Narrowly scoped by construction: a single UPDATE
+ * against the seed admin's email. Logs outcome only — never the password
+ * or its hash.
+ */
+async function resetSeedAdminPassword(db: RootDb, email: string): Promise<void> {
+  if (!process.env.ADMIN_PASSWORD) {
+    console.log('[seed] ADMIN_PASSWORD_RESET=true but ADMIN_PASSWORD is empty — refusing to reset.');
+    return;
+  }
+  const updated = await db.run('UPDATE admin_users SET password_hash = $1 WHERE email = $2', [
+    await hashPassword(config.seedAdminPassword),
+    email,
+  ]);
+  if (updated.changes === 0) {
+    console.log(`[seed] ADMIN_PASSWORD_RESET=true but no admin ${email} exists — nothing to reset.`);
+  } else {
+    console.log(`[seed] Admin password reset for ${email}. Remove ADMIN_PASSWORD_RESET now.`);
   }
 }
 

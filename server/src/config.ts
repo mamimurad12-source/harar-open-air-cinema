@@ -65,6 +65,13 @@ export const config = {
   seedAdminEmail: process.env.ADMIN_EMAIL ?? 'admin@harar-cinema.local',
   seedAdminPassword: process.env.ADMIN_PASSWORD ?? 'change-me-dev-admin',
   seedAdminName: process.env.ADMIN_NAME ?? 'Harar Cinema Admin',
+  /**
+   * One-time admin password reset switch. Honored ONLY when exactly 'true':
+   * boot then rewrites the existing seed admin's password hash from
+   * ADMIN_PASSWORD. Anything else (including absent) = no reset behavior.
+   * Remove the variable right after a verified reset.
+   */
+  adminPasswordReset: process.env.ADMIN_PASSWORD_RESET === 'true',
   /** Minutes a PENDING booking stays payable before expiring + releasing seats. */
   paymentWindowMinutes: Number(process.env.PAYMENT_WINDOW_MINUTES ?? 30),
   /** Public site origin (payment return page). */

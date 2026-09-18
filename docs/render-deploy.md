@@ -44,6 +44,21 @@ same seed runs on `npm run dev:server` / `npm start`, or standalone via:
 npm run db:seed
 ```
 
+## 2b. Admin password reset (no Shell needed)
+
+Forgotten password? The seed never overwrites an existing admin, so changing
+`ADMIN_PASSWORD` alone does nothing. Instead:
+
+1. Dashboard → Environment → set `ADMIN_PASSWORD` to the new secret.
+2. Add `ADMIN_PASSWORD_RESET=true` (exact value) → this triggers a redeploy.
+3. After deploy, log in at `/admin` with the new password to verify.
+4. **Remove** `ADMIN_PASSWORD_RESET` → redeploy. The password stays; the
+   switch must not remain armed.
+
+Scope: updates only the existing seed admin's password hash (bcrypt);
+never creates/deletes accounts, never touches events, bookings, or payments.
+With the flag absent (normal state), boot behavior is unchanged.
+
 ## 3. Verify the deployment
 
 Open in a browser (replace with the real Render URL):
