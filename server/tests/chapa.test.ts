@@ -107,6 +107,72 @@ describe('ChapaAdapter.createPayment', () => {
       returnUrl: 'https://ret',
     }), /unreachable/);
   });
+
+  it('logs sanitized initialize diagnostics without secrets or customer data', async () => {
+    const logged: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      logged.push(args.map((a) => String(a)).join(' '));
+    };
+    try {
+      const hostile = adapterWithFetch(() =>
+        jsonResponse(400, {
+          // Simulate a provider message echoing our secret: must be redacted.
+          message: 'bad key test-secret-key rejected',
+          status: 'failed',
+        }),
+      );
+      await assert.rejects(() => hostile.adapter.createPayment({
+        transactionId: 'hoc-HOC-ABC123-X7K2',
+        amountBirr: 500,
+        currency: 'ETB',
+        customerName: 'Hanna Girma',
+        customerPhone: '251911123456',
+        bookingReference: 'HOC-ABC123',
+        eventTitle: 'Premiere Night',
+        callbackUrl: 'https://cb',
+        returnUrl: 'https://ret',
+      }), /Chapa initialize failed/);
+
+      const unreachable = new ChapaAdapter(
+        { secretKey: 'k-net', webhookSecret: 'wh-net', mode: 'test', baseUrl: 'https://x' },
+        (async () => {
+          throw new TypeError('fetch failed');
+        }) as unknown as FetchStub,
+      );
+      await assert.rejects(() => unreachable.createPayment({
+        transactionId: 't',
+        amountBirr: 250,
+        currency: 'ETB',
+        customerName: 'A',
+        customerPhone: '251911000000',
+        bookingReference: 'HOC-1',
+        eventTitle: 'E',
+        callbackUrl: 'https://cb',
+        returnUrl: 'https://ret',
+      }), /unreachable/);
+    } finally {
+      console.error = origError;
+    }
+    const out = logged.join('\n');
+    assert.match(out, /\[chapa\] initialize failed: httpStatus=400/);
+    assert.match(out, /httpStatus=none/);
+    for (const forbidden of [
+      'test-secret-key',
+      'test-webhook-secret',
+      'k-net',
+      'wh-net',
+      '0911123456',
+      '251911123456',
+      '251911000000',
+      'hoc-HOC-ABC123-X7K2',
+      'Hanna Girma',
+      'Bearer',
+      'Authorization',
+    ]) {
+      assert.ok(!out.includes(forbidden), `diagnostic log must not contain ${forbidden}`);
+    }
+  });
 });
 
 describe('ChapaAdapter.verifyPayment', () => {

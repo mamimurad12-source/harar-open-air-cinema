@@ -82,6 +82,32 @@ function splitName(fullName: string): { first_name: string; last_name: string } 
   return { first_name: parts[0] ?? 'Guest', last_name: parts.slice(1).join(' ') };
 }
 
+/**
+ * Sanitized initialize-failure diagnostics for server logs. Logs ONLY the
+ * HTTP status plus Chapa's short status/message strings (with any configured
+ * secret value redacted). Never logs headers, payloads, customer data, or
+ * credentials — callers must not pass them here.
+ */
+function logInitializeFailure(
+  res: Response | null,
+  body: ChapaInitResponse | null,
+  secrets: string[],
+): void {
+  const redact = (text: string): string => {
+    let out = text;
+    for (const s of secrets) {
+      if (s) out = out.split(s).join('[redacted]');
+    }
+    return out;
+  };
+  const status = body?.status ?? 'none';
+  const message =
+    typeof body?.message === 'string' ? body.message.slice(0, 200) : 'unknown error';
+  console.error(
+    `[chapa] initialize failed: httpStatus=${res?.status ?? 'none'} status=${redact(String(status)).slice(0, 60)} message=${redact(message)}`,
+  );
+}
+
 export class ChapaAdapter implements PaymentProvider {
   readonly id = 'chapa';
   readonly displayName = 'Chapa';
@@ -143,11 +169,13 @@ export class ChapaAdapter implements PaymentProvider {
         body: JSON.stringify(payload),
       });
     } catch (err) {
+      logInitializeFailure(null, null, [this.config.secretKey, this.config.webhookSecret]);
       throw new Error(`Chapa unreachable: ${(err as Error)?.message ?? 'network error'}`);
     }
     const body = (await res.json().catch(() => null)) as ChapaInitResponse | null;
     const checkoutUrl = body?.data?.checkout_url;
     if (!res.ok || body?.status !== 'success' || !checkoutUrl) {
+      logInitializeFailure(res, body, [this.config.secretKey, this.config.webhookSecret]);
       throw new Error(
         `Chapa initialize failed (${res.status}): ${body?.message ?? 'unknown error'}`,
       );
