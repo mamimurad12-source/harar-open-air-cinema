@@ -82,29 +82,25 @@ function splitName(fullName: string): { first_name: string; last_name: string } 
   return { first_name: parts[0] ?? 'Guest', last_name: parts.slice(1).join(' ') };
 }
 
-/**
- * Sanitized initialize-failure diagnostics for server logs. Logs ONLY the
- * HTTP status plus Chapa's short status/message strings (with any configured
- * secret value redacted). Never logs headers, payloads, customer data, or
- * credentials — callers must not pass them here.
- */
+/** Fixed classifications only: never interpolate provider text or request data. */
 function logInitializeFailure(
   res: Response | null,
   body: ChapaInitResponse | null,
-  secrets: string[],
 ): void {
-  const redact = (text: string): string => {
-    let out = text;
-    for (const s of secrets) {
-      if (s) out = out.split(s).join('[redacted]');
-    }
-    return out;
-  };
-  const status = body?.status ?? 'none';
+  const status =
+    body?.status === 'success' ? 'success' :
+    body?.status === 'failed' ? 'failed' :
+    body?.status === 'error' ? 'error' :
+    body?.status === undefined ? 'none' : 'other';
   const message =
-    typeof body?.message === 'string' ? body.message.slice(0, 200) : 'unknown error';
+    !res ? 'initialize_exception' :
+    !res.ok ? 'provider_http_error' :
+    !body ? 'unreadable_response_body' :
+    body.status !== 'success' ? 'provider_unsuccessful_status' :
+    !body.data?.checkout_url ? 'missing_checkout_url' :
+    'initialize_exception';
   console.error(
-    `[chapa] initialize failed: httpStatus=${res?.status ?? 'none'} status=${redact(String(status)).slice(0, 60)} message=${redact(message)}`,
+    `[chapa] initialize failed: httpStatus=${res?.status ?? 'none'} status=${status} message=${message}`,
   );
 }
 
@@ -139,48 +135,52 @@ export class ChapaAdapter implements PaymentProvider {
   }
 
   async createPayment(ctx: InitiateContext): Promise<InitiateResult> {
-    this.requireConfigured();
-    const { first_name, last_name } = splitName(ctx.customerName);
-    const phone = toChapaPhone(ctx.customerPhone);
-    const payload: Record<string, unknown> = {
-      amount: String(ctx.amountBirr),
-      currency: ctx.currency,
-      tx_ref: ctx.transactionId,
-      first_name,
-      last_name,
-      callback_url: ctx.callbackUrl,
-      return_url: ctx.returnUrl,
-      customization: {
-        title: 'Harar Open Air Cinema',
-        description: `${ctx.eventTitle} — booking ${ctx.bookingReference}`,
-      },
-      meta: { booking_reference: ctx.bookingReference, payment_reason: 'Cinema ticket' },
-    };
-    if (phone) payload.phone_number = phone;
-
-    let res: Response;
+    let res: Response | null = null;
+    let body: ChapaInitResponse | null = null;
     try {
-      res = await this.fetchImpl(`${this.config.baseUrl}/transaction/initialize`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${this.config.secretKey}`,
-          'Content-Type': 'application/json',
+      this.requireConfigured();
+      const { first_name, last_name } = splitName(ctx.customerName);
+      const phone = toChapaPhone(ctx.customerPhone);
+      const payload: Record<string, unknown> = {
+        amount: String(ctx.amountBirr),
+        currency: ctx.currency,
+        tx_ref: ctx.transactionId,
+        first_name,
+        last_name,
+        callback_url: ctx.callbackUrl,
+        return_url: ctx.returnUrl,
+        customization: {
+          title: 'Harar Open Air Cinema',
+          description: `${ctx.eventTitle} — booking ${ctx.bookingReference}`,
         },
-        body: JSON.stringify(payload),
-      });
+        meta: { booking_reference: ctx.bookingReference, payment_reason: 'Cinema ticket' },
+      };
+      if (phone) payload.phone_number = phone;
+
+      try {
+        res = await this.fetchImpl(`${this.config.baseUrl}/transaction/initialize`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.config.secretKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        throw new Error(`Chapa unreachable: ${(err as Error)?.message ?? 'network error'}`);
+      }
+      body = (await res.json().catch(() => null)) as ChapaInitResponse | null;
+      const checkoutUrl = body?.data?.checkout_url;
+      if (!res.ok || body?.status !== 'success' || !checkoutUrl) {
+        throw new Error(
+          `Chapa initialize failed (${res.status}): ${body?.message ?? 'unknown error'}`,
+        );
+      }
+      return { checkoutUrl, audit: { status: body.status, message: body.message } };
     } catch (err) {
-      logInitializeFailure(null, null, [this.config.secretKey, this.config.webhookSecret]);
-      throw new Error(`Chapa unreachable: ${(err as Error)?.message ?? 'network error'}`);
+      logInitializeFailure(res, body);
+      throw err;
     }
-    const body = (await res.json().catch(() => null)) as ChapaInitResponse | null;
-    const checkoutUrl = body?.data?.checkout_url;
-    if (!res.ok || body?.status !== 'success' || !checkoutUrl) {
-      logInitializeFailure(res, body, [this.config.secretKey, this.config.webhookSecret]);
-      throw new Error(
-        `Chapa initialize failed (${res.status}): ${body?.message ?? 'unknown error'}`,
-      );
-    }
-    return { checkoutUrl, audit: { status: body.status, message: body.message } };
   }
 
   async verifyPayment(transactionId: string): Promise<VerificationEvidence> {

@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { ChapaAdapter, toChapaPhone } from '../src/services/payments/chapa';
 
 type FetchStub = typeof fetch;
@@ -108,71 +109,108 @@ describe('ChapaAdapter.createPayment', () => {
     }), /unreachable/);
   });
 
-  it('logs sanitized initialize diagnostics without secrets or customer data', async () => {
-    const logged: string[] = [];
-    const origError = console.error;
-    console.error = (...args: unknown[]) => {
-      logged.push(args.map((a) => String(a)).join(' '));
-    };
-    try {
-      const hostile = adapterWithFetch(() =>
-        jsonResponse(400, {
-          // Simulate a provider message echoing our secret: must be redacted.
-          message: 'bad key test-secret-key rejected',
-          status: 'failed',
-        }),
-      );
-      await assert.rejects(() => hostile.adapter.createPayment({
-        transactionId: 'hoc-HOC-ABC123-X7K2',
-        amountBirr: 500,
-        currency: 'ETB',
-        customerName: 'Hanna Girma',
-        customerPhone: '251911123456',
-        bookingReference: 'HOC-ABC123',
-        eventTitle: 'Premiere Night',
-        callbackUrl: 'https://cb',
-        returnUrl: 'https://ret',
-      }), /Chapa initialize failed/);
+  // Each case runs the real adapter and console.error in a separate process.
+  // Only fetch is stubbed: no network, real credentials, or database is used.
+  const diagnosticCases = [
+    { name: 'HTTP 400', http: 400, status: 'failed', message: 'provider_http_error' },
+    { name: 'HTTP 401', http: 401, status: 'failed', message: 'provider_http_error' },
+    { name: 'HTTP 500', http: 500, status: 'failed', message: 'provider_http_error' },
+    { name: 'network rejection', http: 'none', status: 'none', message: 'initialize_exception' },
+    { name: 'malformed JSON', http: 200, status: 'none', message: 'unreadable_response_body' },
+    { name: 'unsuccessful status', http: 200, status: 'failed', message: 'provider_unsuccessful_status' },
+    { name: 'error status', http: 200, status: 'error', message: 'provider_unsuccessful_status' },
+    { name: 'missing checkout URL', http: 200, status: 'success', message: 'missing_checkout_url' },
+    { name: 'pre-fetch exception', http: 'none', status: 'none', message: 'initialize_exception' },
+    { name: 'missing configuration', http: 'none', status: 'none', message: 'initialize_exception' },
+    { name: 'hostile strings', http: 400, status: 'other', message: 'provider_http_error' },
+    { name: 'structured provider fields', http: 400, status: 'other', message: 'provider_http_error' },
+    { name: 'success', http: 200, status: 'success', message: '' },
+  ] as const;
 
-      const unreachable = new ChapaAdapter(
-        { secretKey: 'k-net', webhookSecret: 'wh-net', mode: 'test', baseUrl: 'https://x' },
-        (async () => {
-          throw new TypeError('fetch failed');
-        }) as unknown as FetchStub,
+  for (const scenario of diagnosticCases) {
+    it(`emits only fixed diagnostics to actual stderr: ${scenario.name}`, () => {
+      const script = `
+        import assert from 'node:assert/strict';
+        import { ChapaAdapter } from ${JSON.stringify(new URL('../src/services/payments/chapa.ts', import.meta.url).href)};
+        const scenario = ${JSON.stringify(scenario)};
+        // Synthetic values only; the logger must not depend on knowing any of them.
+        const secret = 'synthetic-api-secret';
+        const webhookSecret = 'synthetic-webhook-secret';
+        const hostile = 'x'.repeat(195) + secret + ' ' + webhookSecret +
+          ' Authorization: Bearer arbitrary-token CHAPA_TEST_PRIV_fake' +
+          ' signature=fake-signature email=synthetic@example.invalid' +
+          ' phone=0900123456 customer=Synthetic Customer tx_ref=synthetic-tx' +
+          String.fromCharCode(10) + '[forged-log-line]';
+        const ctx = {
+          transactionId: 'synthetic-tx', amountBirr: 250, currency: 'ETB',
+          customerName: 'Synthetic Customer', customerPhone: '0900123456',
+          bookingReference: 'SYNTHETIC', eventTitle: 'Test',
+          callbackUrl: 'https://example.invalid/callback',
+          returnUrl: 'https://example.invalid/return?token=synthetic-token',
+        };
+        const preFetchError = new Error(hostile);
+        if (scenario.name === 'pre-fetch exception') {
+          Object.defineProperty(ctx, 'customerName', { get() { throw preFetchError; } });
+        }
+        let calls = 0;
+        const adapter = new ChapaAdapter({
+          secretKey: scenario.name === 'missing configuration' ? '' : secret,
+          webhookSecret, mode: 'test', baseUrl: 'https://example.invalid',
+        }, async (_url, init) => {
+          calls++;
+          if (scenario.name === 'network rejection') throw new TypeError(hostile);
+          if (scenario.name === 'malformed JSON') {
+            return new Response(hostile, { status: 200 });
+          }
+          const body = {
+            status: scenario.status,
+            // Echo both hostile strings AND the entire request, including headers.
+            message: hostile + JSON.stringify(init),
+          };
+          if (scenario.name === 'hostile strings') body.status = hostile;
+          if (scenario.name === 'structured provider fields') {
+            body.status = { nested: hostile };
+            body.message = { nested: hostile, request: init };
+          }
+          if (scenario.name === 'success') {
+            body.data = { checkout_url: 'https://example.invalid/checkout' };
+          }
+          return new Response(JSON.stringify(body), { status: Number(scenario.http) });
+        });
+        if (scenario.name === 'success') {
+          const result = await adapter.createPayment(ctx);
+          assert.equal(result.checkoutUrl, 'https://example.invalid/checkout');
+        } else {
+          let caught;
+          try { await adapter.createPayment(ctx); } catch (err) { caught = err; }
+          assert.ok(caught instanceof Error);
+          if (scenario.name === 'pre-fetch exception') {
+            assert.equal(caught, preFetchError); // Preserve the original exception.
+          } else if (scenario.name === 'network rejection') {
+            assert.equal(caught.message, 'Chapa unreachable: ' + hostile);
+          } else if (scenario.name === 'missing configuration') {
+            assert.match(caught.message, /Chapa is not configured/);
+          } else {
+            assert.match(caught.message, /^Chapa initialize failed/);
+          }
+        }
+        assert.equal(calls,
+          ['pre-fetch exception', 'missing configuration'].includes(scenario.name) ? 0 : 1);
+      `;
+      const child = spawnSync(process.execPath,
+        ['--import', 'tsx', '--input-type=module', '--eval', script],
+        { encoding: 'utf8', timeout: 15_000 },
       );
-      await assert.rejects(() => unreachable.createPayment({
-        transactionId: 't',
-        amountBirr: 250,
-        currency: 'ETB',
-        customerName: 'A',
-        customerPhone: '251911000000',
-        bookingReference: 'HOC-1',
-        eventTitle: 'E',
-        callbackUrl: 'https://cb',
-        returnUrl: 'https://ret',
-      }), /unreachable/);
-    } finally {
-      console.error = origError;
-    }
-    const out = logged.join('\n');
-    assert.match(out, /\[chapa\] initialize failed: httpStatus=400/);
-    assert.match(out, /httpStatus=none/);
-    for (const forbidden of [
-      'test-secret-key',
-      'test-webhook-secret',
-      'k-net',
-      'wh-net',
-      '0911123456',
-      '251911123456',
-      '251911000000',
-      'hoc-HOC-ABC123-X7K2',
-      'Hanna Girma',
-      'Bearer',
-      'Authorization',
-    ]) {
-      assert.ok(!out.includes(forbidden), `diagnostic log must not contain ${forbidden}`);
-    }
-  });
+      assert.ifError(child.error);
+      assert.equal(child.status, 0, child.stderr);
+      assert.equal(child.stdout, '');
+      // Exact equality proves one line only, no arbitrary text or extra output.
+      const expected = scenario.name === 'success' ? '' :
+        `[chapa] initialize failed: httpStatus=${scenario.http} status=${scenario.status} message=${scenario.message}\n`;
+      assert.equal(child.stderr, expected);
+    });
+  }
+
 });
 
 describe('ChapaAdapter.verifyPayment', () => {
